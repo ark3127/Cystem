@@ -1057,6 +1057,9 @@ class _MessageBubble extends StatelessWidget {
                 : MarkdownBody(
                     data: message.content,
                     selectable: true,
+                  builders: {
+  'pre': CodeBlockBuilder(),
+},
                     styleSheet: MarkdownStyleSheet(
                       p: TextStyle(
                         color: textColor,
