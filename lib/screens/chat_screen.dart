@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../models/chat_conversation.dart';
@@ -6,6 +7,7 @@ import '../models/chat_message.dart';
 import '../services/chat_storage_service.dart';
 import '../services/nvidia_api_service.dart';
 import '../widgets/chat_drawer.dart';
+import '../widgets/message_actions.dart';
 import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -110,7 +112,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     await _saveAllConversations();
 
-    if (mounted) {
+    if (mounted &&
+        Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
   }
@@ -124,7 +127,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _conversation = conversation;
     });
 
-    Navigator.of(context).pop();
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
 
     _scrollToBottom();
   }
@@ -151,6 +156,17 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    await _sendUserText(text);
+  }
+
+  Future<void> _sendUserText(
+    String text,
+  ) async {
+    if (_conversation == null ||
+        _isGenerating) {
+      return;
+    }
+
     final now = DateTime.now();
 
     final userMessage = ChatMessage(
@@ -159,6 +175,32 @@ class _ChatScreenState extends State<ChatScreen> {
       role: MessageRole.user,
       createdAt: now,
     );
+
+    setState(() {
+      _conversation!.messages.add(userMessage);
+      _conversation!.updatedAt = DateTime.now();
+
+      if (_conversation!.title == 'New Chat') {
+        _conversation!.title = text.length > 40
+            ? '${text.substring(0, 40)}...'
+            : text;
+      }
+    });
+
+    _messageController.clear();
+
+    await _saveAllConversations();
+
+    _scrollToBottom();
+
+    await _generateResponse();
+  }
+
+  Future<void> _generateResponse() async {
+    if (_conversation == null ||
+        _isGenerating) {
+      return;
+    }
 
     final assistantMessageId =
         '${DateTime.now().microsecondsSinceEpoch}_assistant';
@@ -171,20 +213,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     setState(() {
-      _conversation!.messages.add(userMessage);
       _conversation!.messages.add(assistantMessage);
       _conversation!.updatedAt = DateTime.now();
-
-      if (_conversation!.title == 'New Chat') {
-        _conversation!.title = text.length > 40
-            ? '${text.substring(0, 40)}...'
-            : text;
-      }
-
       _isGenerating = true;
     });
-
-    _messageController.clear();
 
     _scrollToBottom();
 
@@ -207,19 +239,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
         if (!mounted) return;
 
-        setState(() {
-          final index =
-              _conversation!.messages.indexWhere(
-            (message) =>
-                message.id == assistantMessageId,
-          );
+        final index =
+            _conversation!.messages.indexWhere(
+          (message) =>
+              message.id == assistantMessageId,
+        );
 
-          if (index != -1) {
-            _conversation!.messages[index] =
-                _conversation!.messages[index].copyWith(
-              content: generatedText,
-            );
-          }
+        if (index == -1) return;
+
+        setState(() {
+          _conversation!.messages[index] =
+              _conversation!.messages[index].copyWith(
+            content: generatedText,
+          );
         });
 
         _scrollToBottom();
@@ -255,13 +287,210 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _copyMessage(
+    ChatMessage message,
+  ) async {
+    await Clipboard.setData(
+      ClipboardData(text: message.content),
+    );
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Copied to clipboard'),
+      ),
+    );
+  }
+
+  Future<void> _editMessage(
+    ChatMessage message,
+  ) async {
+    if (_conversation == null ||
+        _isGenerating) {
+      return;
+    }
+
+    final controller = TextEditingController(
+      text: message.content,
+    );
+
+    final editedText = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit message'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 8,
+            decoration: const InputDecoration(
+              hintText: 'Edit your message...',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  controller.text.trim(),
+                );
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (editedText == null ||
+        editedText.isEmpty ||
+        !mounted) {
+      return;
+    }
+
+    final index =
+        _conversation!.messages.indexWhere(
+      (item) => item.id == message.id,
+    );
+
+    if (index == -1) return;
+
+    setState(() {
+      _conversation!.messages =
+          _conversation!.messages
+              .take(index + 1)
+              .toList();
+
+      _conversation!.messages[index] =
+          ChatMessage(
+        id: message.id,
+        content: editedText,
+        role: MessageRole.user,
+        createdAt: message.createdAt,
+      );
+
+      _conversation!.updatedAt = DateTime.now();
+    });
+
+    await _saveAllConversations();
+
+    _scrollToBottom();
+
+    await _generateResponse();
+  }
+
+  Future<void> _regenerateResponse(
+    ChatMessage message,
+  ) async {
+    if (_conversation == null ||
+        _isGenerating) {
+      return;
+    }
+
+    final index =
+        _conversation!.messages.indexWhere(
+      (item) => item.id == message.id,
+    );
+
+    if (index == -1 ||
+        !message.isAssistant) {
+      return;
+    }
+
+    setState(() {
+      _conversation!.messages =
+          _conversation!.messages
+              .take(index)
+              .toList();
+
+      _conversation!.updatedAt = DateTime.now();
+    });
+
+    await _saveAllConversations();
+
+    _scrollToBottom();
+
+    await _generateResponse();
+  }
+
+  Future<void> _deleteMessage(
+    ChatMessage message,
+  ) async {
+    if (_conversation == null ||
+        _isGenerating) {
+      return;
+    }
+
+    final confirmed =
+        await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete message?'),
+          content: const Text(
+            'This will remove this message and all '
+            'messages after it from the conversation.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true ||
+        !mounted) {
+      return;
+    }
+
+    final index =
+        _conversation!.messages.indexWhere(
+      (item) => item.id == message.id,
+    );
+
+    if (index == -1) return;
+
+    setState(() {
+      _conversation!.messages =
+          _conversation!.messages
+              .take(index)
+              .toList();
+
+      _conversation!.updatedAt = DateTime.now();
+    });
+
+    await _saveAllConversations();
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
 
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
+        duration: const Duration(
+          milliseconds: 250,
+        ),
         curve: Curves.easeOut,
       );
     });
@@ -298,7 +527,8 @@ class _ChatScreenState extends State<ChatScreen> {
         conversations: _conversations,
         currentConversationId: _conversation?.id,
         onNewChat: _createNewChat,
-        onSelectConversation: _selectConversation,
+        onSelectConversation:
+            _selectConversation,
         onTogglePin: _togglePin,
         onOpenSettings: () {
           Navigator.of(context).pop();
@@ -332,7 +562,8 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.menu),
             onPressed: () {
-              _scaffoldKey.currentState?.openDrawer();
+              _scaffoldKey.currentState
+                  ?.openDrawer();
             },
           ),
           const SizedBox(width: 8),
@@ -356,7 +587,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 : _createNewChat,
           ),
           IconButton(
-            icon: const Icon(Icons.settings_outlined),
+            icon: const Icon(
+              Icons.settings_outlined,
+            ),
             onPressed: _openSettings,
           ),
         ],
@@ -379,14 +612,16 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(height: 20),
             Text(
               'What can I help you with?',
-              style:
-                  Theme.of(context).textTheme.titleLarge,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge,
             ),
             const SizedBox(height: 8),
             Text(
               'Powered by Nemotron',
-              style:
-                  Theme.of(context).textTheme.bodyMedium,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium,
             ),
           ],
         ),
@@ -432,6 +667,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
         return _MessageBubble(
           message: message,
+          onCopy: () => _copyMessage(message),
+          onEdit: message.isUser
+              ? () => _editMessage(message)
+              : null,
+          onRegenerate: message.isAssistant
+              ? () => _regenerateResponse(message)
+              : null,
+          onDelete: () => _deleteMessage(message),
         );
       },
     );
@@ -449,7 +692,8 @@ class _ChatScreenState extends State<ChatScreen> {
         controller: _messageController,
         minLines: 1,
         maxLines: 6,
-        textInputAction: TextInputAction.newline,
+        textInputAction:
+            TextInputAction.newline,
         onSubmitted: (_) {
           if (!_isGenerating) {
             _sendMessage();
@@ -460,7 +704,9 @@ class _ChatScreenState extends State<ChatScreen> {
               ? 'CYSTEM is responding...'
               : 'Ask anything...',
           suffixIcon: IconButton(
-            icon: const Icon(Icons.arrow_upward),
+            icon: const Icon(
+              Icons.arrow_upward,
+            ),
             onPressed: _isGenerating
                 ? null
                 : _sendMessage,
@@ -474,9 +720,17 @@ class _ChatScreenState extends State<ChatScreen> {
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
+    required this.onCopy,
+    required this.onEdit,
+    required this.onRegenerate,
+    required this.onDelete,
   });
 
   final ChatMessage message;
+  final VoidCallback onCopy;
+  final VoidCallback? onEdit;
+  final VoidCallback? onRegenerate;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -501,66 +755,92 @@ class _MessageBubble extends StatelessWidget {
         margin: const EdgeInsets.only(
           bottom: 12,
         ),
-        padding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
+        padding: const EdgeInsets.fromLTRB(
+          16,
+          12,
+          8,
+          8,
         ),
         decoration: BoxDecoration(
           color: backgroundColor,
           borderRadius:
               BorderRadius.circular(18),
         ),
-        child: isUser
-            ? Text(
-                message.content,
-                style: TextStyle(
-                  color: textColor,
-                ),
-              )
-            : MarkdownBody(
-                data: message.content,
-                selectable: true,
-                styleSheet: MarkdownStyleSheet(
-                  p: TextStyle(
-                    color: textColor,
-                    fontSize: 16,
-                    height: 1.45,
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.stretch,
+          children: [
+            isUser
+                ? Text(
+                    message.content,
+                    style: TextStyle(
+                      color: textColor,
+                    ),
+                  )
+                : MarkdownBody(
+                    data: message.content,
+                    selectable: true,
+                    styleSheet:
+                        MarkdownStyleSheet(
+                      p: TextStyle(
+                        color: textColor,
+                        fontSize: 16,
+                        height: 1.45,
+                      ),
+                      h1: TextStyle(
+                        color: textColor,
+                        fontSize: 24,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                      h2: TextStyle(
+                        color: textColor,
+                        fontSize: 21,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                      h3: TextStyle(
+                        color: textColor,
+                        fontSize: 18,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                      code: TextStyle(
+                        color: textColor,
+                        fontFamily:
+                            'monospace',
+                      ),
+                      codeblockDecoration:
+                          BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        )
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        borderRadius:
+                            BorderRadius.circular(
+                          12,
+                        ),
+                      ),
+                    ),
                   ),
-                  h1: TextStyle(
-                    color: textColor,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  h2: TextStyle(
-                    color: textColor,
-                    fontSize: 21,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  h3: TextStyle(
-                    color: textColor,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  code: TextStyle(
-                    color: textColor,
-                    fontFamily: 'monospace',
-                  ),
-                  codeblockDecoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest,
-                    borderRadius:
-                        BorderRadius.circular(12),
-                  ),
-                  blockquoteDecoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest,
-                    borderRadius:
-                        BorderRadius.circular(8),
-                  ),
-                ),
+
+            const SizedBox(height: 4),
+
+            Align(
+              alignment:
+                  Alignment.centerRight,
+              child: MessageActions(
+                isUser: isUser,
+                onCopy: onCopy,
+                onEdit: onEdit,
+                onRegenerate:
+                    onRegenerate,
+                onDelete: onDelete,
               ),
+            ),
+          ],
+        ),
       ),
     );
   }
