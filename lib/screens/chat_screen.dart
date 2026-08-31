@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
+import '../services/chat_storage_service.dart';
 import '../services/nvidia_api_service.dart';
 import 'settings_screen.dart';
 
@@ -15,88 +17,166 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController =
       TextEditingController();
 
-  final NvidiaApiService _apiService =
-      NvidiaApiService();
+  final NvidiaApiService _apiService = NvidiaApiService();
+  final ChatStorageService _storageService =
+      ChatStorageService();
 
-  final List<ChatMessage> _messages = [];
-
+  ChatConversation? _conversation;
   bool _isGenerating = false;
+  bool _isLoading = true;
+
+  List<ChatMessage> get _messages =>
+      _conversation?.messages ?? [];
 
   @override
-  void dispose() {
-    _messageController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _loadOrCreateConversation();
+  }
+
+  Future<void> _loadOrCreateConversation() async {
+    final conversations =
+        await _storageService.loadConversations();
+
+    if (conversations.isNotEmpty) {
+      conversations.sort(
+        (a, b) => b.updatedAt.compareTo(a.updatedAt),
+      );
+
+      _conversation = conversations.first;
+    } else {
+      final now = DateTime.now();
+
+      _conversation = ChatConversation(
+        id: now.microsecondsSinceEpoch.toString(),
+        title: 'New Chat',
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      await _saveConversation();
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _saveConversation() async {
+    if (_conversation == null) return;
+
+    final conversations =
+        await _storageService.loadConversations();
+
+    conversations.removeWhere(
+      (conversation) =>
+          conversation.id == _conversation!.id,
+    );
+
+    conversations.add(_conversation!);
+
+    await _storageService.saveConversations(
+      conversations,
+    );
   }
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
 
-    if (text.isEmpty || _isGenerating) return;
+    if (text.isEmpty ||
+        _isGenerating ||
+        _conversation == null) {
+      return;
+    }
+
+    final now = DateTime.now();
 
     final userMessage = ChatMessage(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: now.microsecondsSinceEpoch.toString(),
       content: text,
       role: MessageRole.user,
-      createdAt: DateTime.now(),
+      createdAt: now,
     );
 
     final assistantMessageId =
         '${DateTime.now().microsecondsSinceEpoch}_assistant';
 
-    var generatedText = '';
+    final assistantMessage = ChatMessage(
+      id: assistantMessageId,
+      content: '',
+      role: MessageRole.assistant,
+      createdAt: DateTime.now(),
+    );
 
     setState(() {
-      _messages.add(userMessage);
+      _conversation!.messages.add(userMessage);
+      _conversation!.messages.add(assistantMessage);
+      _conversation!.updatedAt = DateTime.now();
 
-      _messages.add(
-        ChatMessage(
-          id: assistantMessageId,
-          content: '',
-          role: MessageRole.assistant,
-          createdAt: DateTime.now(),
-        ),
-      );
+      if (_conversation!.title == 'New Chat') {
+        _conversation!.title = text.length > 40
+            ? '${text.substring(0, 40)}...'
+            : text;
+      }
 
       _isGenerating = true;
     });
 
     _messageController.clear();
 
+    await _saveConversation();
+
+    var generatedText = '';
+
     try {
+      final messagesForApi =
+          List<ChatMessage>.from(
+        _conversation!.messages
+            .where(
+              (message) =>
+                  message.id != assistantMessageId,
+            ),
+      );
+
       await for (final chunk
-          in _apiService.streamMessage(_messages.take(
-        _messages.length - 1,
-      ).toList())) {
+          in _apiService.streamMessage(messagesForApi)) {
         generatedText += chunk;
 
         if (!mounted) return;
 
         setState(() {
-          final index = _messages.indexWhere(
+          final index =
+              _conversation!.messages.indexWhere(
             (message) =>
                 message.id == assistantMessageId,
           );
 
           if (index != -1) {
-            _messages[index] = ChatMessage(
-              id: assistantMessageId,
+            _conversation!.messages[index] =
+                _conversation!.messages[index]
+                    .copyWith(
               content: generatedText,
-              role: MessageRole.assistant,
-              createdAt: _messages[index].createdAt,
             );
           }
         });
       }
+
+      _conversation!.updatedAt = DateTime.now();
+      await _saveConversation();
     } catch (error) {
       if (!mounted) return;
 
       setState(() {
-        _messages.removeWhere(
+        _conversation!.messages.removeWhere(
           (message) =>
               message.id == assistantMessageId &&
               message.content.isEmpty,
         );
       });
+
+      await _saveConversation();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -121,7 +201,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   @override
+  void dispose() {
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -152,24 +246,26 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.menu),
             onPressed: () {
-              // Sidebar will be added later.
+              // Sidebar comes next.
             },
           ),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
-              'CYSTEM',
-              style: TextStyle(
+              _conversation?.title ?? 'CYSTEM',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
-                letterSpacing: 1.5,
+                letterSpacing: 1.2,
               ),
             ),
           ),
           IconButton(
             icon: const Icon(Icons.add),
             onPressed: () {
-              // New chat functionality comes later.
+              // New chat comes with the sidebar.
             },
           ),
           IconButton(
@@ -221,12 +317,33 @@ class _ChatScreenState extends State<ChatScreen> {
       itemBuilder: (context, index) {
         final message = _messages[index];
 
+        final isGeneratingMessage =
+            _isGenerating &&
+            index == _messages.length - 1 &&
+            message.isAssistant;
+
+        if (message.content.isEmpty &&
+            isGeneratingMessage) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                ),
+                SizedBox(width: 12),
+                Text('Thinking...'),
+              ],
+            ),
+          );
+        }
+
         return _MessageBubble(
           message: message,
-          isGenerating:
-              _isGenerating &&
-              index == _messages.length - 1 &&
-              message.isAssistant,
         );
       },
     );
@@ -269,35 +386,13 @@ class _ChatScreenState extends State<ChatScreen> {
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
-    required this.isGenerating,
   });
 
   final ChatMessage message;
-  final bool isGenerating;
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
-
-    if (message.content.isEmpty &&
-        isGenerating) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-              ),
-            ),
-            SizedBox(width: 12),
-            Text('Thinking...'),
-          ],
-        ),
-      );
-    }
 
     return Align(
       alignment: isUser
