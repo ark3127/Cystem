@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
@@ -172,7 +173,6 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _conversation!.messages.add(userMessage);
       _conversation!.messages.add(assistantMessage);
-
       _conversation!.updatedAt = DateTime.now();
 
       if (_conversation!.title == 'New Chat') {
@@ -482,6 +482,14 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = message.isUser;
 
+    final backgroundColor = isUser
+        ? Theme.of(context).colorScheme.primary
+        : Theme.of(context).colorScheme.surface;
+
+    final textColor = isUser
+        ? Theme.of(context).colorScheme.onPrimary
+        : Theme.of(context).colorScheme.onSurface;
+
     return Align(
       alignment: isUser
           ? Alignment.centerRight
@@ -498,26 +506,61 @@ class _MessageBubble extends StatelessWidget {
           vertical: 12,
         ),
         decoration: BoxDecoration(
-          color: isUser
-              ? Theme.of(context)
-                  .colorScheme
-                  .primary
-              : Theme.of(context)
-                  .colorScheme
-                  .surface,
+          color: backgroundColor,
           borderRadius:
               BorderRadius.circular(18),
         ),
-        child: Text(
-          message.content,
-          style: TextStyle(
-            color: isUser
-                ? Theme.of(context)
-                    .colorScheme
-                    .onPrimary
-                : null,
-          ),
-        ),
+        child: isUser
+            ? Text(
+                message.content,
+                style: TextStyle(
+                  color: textColor,
+                ),
+              )
+            : MarkdownBody(
+                data: message.content,
+                selectable: true,
+                styleSheet: MarkdownStyleSheet(
+                  p: TextStyle(
+                    color: textColor,
+                    fontSize: 16,
+                    height: 1.45,
+                  ),
+                  h1: TextStyle(
+                    color: textColor,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  h2: TextStyle(
+                    color: textColor,
+                    fontSize: 21,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  h3: TextStyle(
+                    color: textColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  code: TextStyle(
+                    color: textColor,
+                    fontFamily: 'monospace',
+                  ),
+                  codeblockDecoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
+                    borderRadius:
+                        BorderRadius.circular(12),
+                  ),
+                  blockquoteDecoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
+                    borderRadius:
+                        BorderRadius.circular(8),
+                  ),
+                ),
+              ),
       ),
     );
   }
