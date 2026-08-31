@@ -18,7 +18,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController =
       TextEditingController();
 
-  final NvidiaApiService _apiService = NvidiaApiService();
+  final ScrollController _scrollController =
+      ScrollController();
+
+  final NvidiaApiService _apiService =
+      NvidiaApiService();
+
   final ChatStorageService _storageService =
       ChatStorageService();
 
@@ -75,6 +80,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _conversations = conversations;
       _isLoading = false;
     });
+
+    _scrollToBottom();
   }
 
   Future<void> _saveAllConversations() async {
@@ -117,6 +124,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     Navigator.of(context).pop();
+
+    _scrollToBottom();
   }
 
   Future<void> _togglePin(
@@ -177,6 +186,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _messageController.clear();
 
+    _scrollToBottom();
+
     await _saveAllConversations();
 
     var generatedText = '';
@@ -210,6 +221,8 @@ class _ChatScreenState extends State<ChatScreen> {
             );
           }
         });
+
+        _scrollToBottom();
       }
 
       _conversation!.updatedAt = DateTime.now();
@@ -242,6 +255,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   void _openSettings() {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -253,6 +278,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _messageController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -268,7 +294,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Scaffold(
       key: _scaffoldKey,
-
       drawer: ChatDrawer(
         conversations: _conversations,
         currentConversationId: _conversation?.id,
@@ -280,18 +305,15 @@ class _ChatScreenState extends State<ChatScreen> {
           _openSettings();
         },
       ),
-
       body: SafeArea(
         child: Column(
           children: [
             _buildHeader(),
-
             Expanded(
               child: _messages.isEmpty
                   ? _buildWelcome()
                   : _buildMessages(),
             ),
-
             _buildInput(),
           ],
         ),
@@ -374,6 +396,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildMessages() {
     return ListView.builder(
+      controller: _scrollController,
       padding: const EdgeInsets.symmetric(
         horizontal: 16,
         vertical: 12,
@@ -407,7 +430,9 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         }
 
-        return _MessageBubble(message: message);
+        return _MessageBubble(
+          message: message,
+        );
       },
     );
   }
