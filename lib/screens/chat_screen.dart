@@ -23,17 +23,23 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController =
       TextEditingController();
+
   final ScrollController _scrollController =
       ScrollController();
-  final NvidiaApiService _apiService = NvidiaApiService();
+
+  final NvidiaApiService _apiService =
+      NvidiaApiService();
+
   final ChatStorageService _storageService =
       ChatStorageService();
+
   final GlobalKey<ScaffoldState> _scaffoldKey =
       GlobalKey<ScaffoldState>();
 
   StreamSubscription<String>? _generationSubscription;
 
   List<ChatConversation> _conversations = [];
+
   ChatConversation? _conversation;
 
   bool _isGenerating = false;
@@ -45,7 +51,16 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+
+    _messageController.addListener(_onInputChanged);
+
     _loadConversations();
+  }
+
+  void _onInputChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _loadConversations() async {
@@ -56,6 +71,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (conversations.isEmpty) {
       final newConversation = _createConversation();
+
       conversations.add(newConversation);
 
       await _storageService.saveConversations(
@@ -116,12 +132,14 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _conversations.add(newConversation);
       _conversation = newConversation;
+
       _sortConversations(_conversations);
     });
 
     await _saveAllConversations();
 
-    if (mounted && Navigator.of(context).canPop()) {
+    if (mounted &&
+        Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
   }
@@ -148,8 +166,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isGenerating) return;
 
     setState(() {
-      conversation.isPinned = !conversation.isPinned;
+      conversation.isPinned =
+          !conversation.isPinned;
+
       conversation.updatedAt = DateTime.now();
+
       _sortConversations(_conversations);
     });
 
@@ -180,8 +201,9 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
               child: const Text('Cancel'),
             ),
             FilledButton(
@@ -208,6 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       conversation.title = newTitle;
       conversation.updatedAt = DateTime.now();
+
       _sortConversations(_conversations);
     });
 
@@ -230,13 +253,15 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(false),
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(true),
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
               child: const Text('Delete'),
             ),
           ],
@@ -255,7 +280,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (_conversation?.id == conversation.id) {
         if (_conversations.isEmpty) {
-          final newConversation = _createConversation();
+          final newConversation =
+              _createConversation();
+
           _conversations.add(newConversation);
           _conversation = newConversation;
         } else {
@@ -266,6 +293,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     await _saveAllConversations();
+
     _scrollToBottom();
   }
 
@@ -281,8 +309,11 @@ class _ChatScreenState extends State<ChatScreen> {
     await _sendUserText(text);
   }
 
-  Future<void> _sendUserText(String text) async {
-    if (_conversation == null || _isGenerating) {
+  Future<void> _sendUserText(
+    String text,
+  ) async {
+    if (_conversation == null ||
+        _isGenerating) {
       return;
     }
 
@@ -297,12 +328,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _conversation!.messages.add(userMessage);
+
       _conversation!.updatedAt = DateTime.now();
 
       if (_conversation!.title == 'New Chat') {
-        _conversation!.title = text.length > 40
-            ? '${text.substring(0, 40)}...'
-            : text;
+        _conversation!.title =
+            text.length > 40
+                ? '${text.substring(0, 40)}...'
+                : text;
       }
 
       _sortConversations(_conversations);
@@ -311,13 +344,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.clear();
 
     await _saveAllConversations();
+
     _scrollToBottom();
 
     await _generateResponse();
   }
 
   Future<void> _generateResponse() async {
-    if (_conversation == null || _isGenerating) {
+    if (_conversation == null ||
+        _isGenerating) {
       return;
     }
 
@@ -334,19 +369,26 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     setState(() {
-      conversation.messages.add(assistantMessage);
+      conversation.messages.add(
+        assistantMessage,
+      );
+
       conversation.updatedAt = DateTime.now();
+
       _isGenerating = true;
     });
 
     _scrollToBottom();
+
     await _saveAllConversations();
 
     var generatedText = '';
 
-    final messagesForApi = List<ChatMessage>.from(
+    final messagesForApi =
+        List<ChatMessage>.from(
       conversation.messages.where(
-        (message) => message.id != assistantMessageId,
+        (message) =>
+            message.id != assistantMessageId,
       ),
     );
 
@@ -356,13 +398,16 @@ class _ChatScreenState extends State<ChatScreen> {
       (chunk) {
         generatedText += chunk;
 
-        if (!mounted ||
-            _conversation?.id != conversation.id) {
+        if (!mounted) return;
+
+        if (_conversation?.id != conversation.id) {
           return;
         }
 
-        final index = conversation.messages.indexWhere(
-          (message) => message.id == assistantMessageId,
+        final index =
+            conversation.messages.indexWhere(
+          (message) =>
+              message.id == assistantMessageId,
         );
 
         if (index == -1) return;
@@ -390,7 +435,8 @@ class _ChatScreenState extends State<ChatScreen> {
             );
 
             if (index != -1 &&
-                conversation.messages[index]
+                conversation
+                    .messages[index]
                     .content
                     .isEmpty) {
               conversation.messages.removeAt(index);
@@ -402,9 +448,12 @@ class _ChatScreenState extends State<ChatScreen> {
           await _saveAllConversations();
 
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            ScaffoldMessenger.of(context)
+                .showSnackBar(
               SnackBar(
-                content: Text('Error: $error'),
+                content: Text(
+                  'Error: $error',
+                ),
               ),
             );
           }
@@ -418,8 +467,12 @@ class _ChatScreenState extends State<ChatScreen> {
         if (_conversation?.id == conversation.id) {
           setState(() {
             _isGenerating = false;
+
             conversation.updatedAt = DateTime.now();
-            _sortConversations(_conversations);
+
+            _sortConversations(
+              _conversations,
+            );
           });
 
           await _saveAllConversations();
@@ -435,6 +488,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_isGenerating) return;
 
     await _generationSubscription?.cancel();
+
     _generationSubscription = null;
 
     if (!mounted) return;
@@ -444,20 +498,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (_conversation != null) {
         _conversation!.updatedAt = DateTime.now();
+
         _sortConversations(_conversations);
       }
     });
 
     await _saveAllConversations();
+
     _scrollToBottom();
   }
     Future<void> _copyMessage(
     ChatMessage message,
   ) async {
     await Clipboard.setData(
-      ClipboardData(
-        text: message.content,
-      ),
+      ClipboardData(text: message.content),
     );
 
     if (!mounted) return;
@@ -643,9 +697,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
-        duration: const Duration(
-          milliseconds: 250,
-        ),
+        duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
       );
     });
@@ -662,6 +714,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _generationSubscription?.cancel();
+    _messageController.removeListener(
+      _onInputChanged,
+    );
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -738,9 +793,8 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: 'New chat',
-            onPressed: _isGenerating
-                ? null
-                : _createNewChat,
+            onPressed:
+                _isGenerating ? null : _createNewChat,
           ),
           IconButton(
             icon: const Icon(
@@ -762,8 +816,6 @@ class _ChatScreenState extends State<ChatScreen> {
             maxWidth: 650,
           ),
           child: Column(
-            mainAxisAlignment:
-                MainAxisAlignment.center,
             crossAxisAlignment:
                 CrossAxisAlignment.stretch,
             children: [
@@ -890,6 +942,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildInput() {
+    final hasText =
+        _messageController.text.trim().isNotEmpty;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         16,
@@ -903,7 +958,7 @@ class _ChatScreenState extends State<ChatScreen> {
         maxLines: 6,
         textInputAction: TextInputAction.newline,
         onSubmitted: (_) {
-          if (!_isGenerating) {
+          if (!_isGenerating && hasText) {
             _sendMessage();
           }
         },
@@ -922,7 +977,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             onPressed: _isGenerating
                 ? _stopGeneration
-                : _sendMessage,
+                : hasText
+                    ? _sendMessage
+                    : null,
           ),
         ),
       ),
@@ -953,10 +1010,7 @@ class _SuggestionCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              Icon(
-                icon,
-                size: 28,
-              ),
+              Icon(icon, size: 28),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
@@ -1057,9 +1111,9 @@ class _MessageBubble extends StatelessWidget {
                 : MarkdownBody(
                     data: message.content,
                     selectable: true,
-                  builders: {
-  'pre': CodeBlockBuilder(),
-},
+                    builders: {
+                      'pre': CodeBlockBuilder(),
+                    },
                     styleSheet: MarkdownStyleSheet(
                       p: TextStyle(
                         color: textColor,
