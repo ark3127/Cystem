@@ -60,22 +60,11 @@ class _ChatScreenState
     final conversations =
         await _storageService.loadConversations();
 
-    conversations.sort(
-      (a, b) =>
-          b.updatedAt.compareTo(a.updatedAt),
-    );
+    _sortConversations(conversations);
 
     if (conversations.isEmpty) {
-      final now = DateTime.now();
-
       final newConversation =
-          ChatConversation(
-        id: now.microsecondsSinceEpoch
-            .toString(),
-        title: 'New Chat',
-        createdAt: now,
-        updatedAt: now,
-      );
+          _createConversation();
 
       conversations.add(newConversation);
 
@@ -97,7 +86,33 @@ class _ChatScreenState
     _scrollToBottom();
   }
 
+  ChatConversation _createConversation() {
+    final now = DateTime.now();
+
+    return ChatConversation(
+      id: now.microsecondsSinceEpoch
+          .toString(),
+      title: 'New Chat',
+      createdAt: now,
+      updatedAt: now,
+    );
+  }
+
+  void _sortConversations(
+    List<ChatConversation> conversations,
+  ) {
+    conversations.sort((a, b) {
+      if (a.isPinned != b.isPinned) {
+        return a.isPinned ? -1 : 1;
+      }
+
+      return b.updatedAt.compareTo(a.updatedAt);
+    });
+  }
+
   Future<void> _saveAllConversations() async {
+    _sortConversations(_conversations);
+
     await _storageService.saveConversations(
       _conversations,
     );
@@ -106,20 +121,14 @@ class _ChatScreenState
   Future<void> _createNewChat() async {
     if (_isGenerating) return;
 
-    final now = DateTime.now();
-
     final newConversation =
-        ChatConversation(
-      id: now.microsecondsSinceEpoch
-          .toString(),
-      title: 'New Chat',
-      createdAt: now,
-      updatedAt: now,
-    );
+        _createConversation();
 
     setState(() {
       _conversations.add(newConversation);
       _conversation = newConversation;
+
+      _sortConversations(_conversations);
     });
 
     await _saveAllConversations();
@@ -157,9 +166,156 @@ class _ChatScreenState
 
       conversation.updatedAt =
           DateTime.now();
+
+      _sortConversations(_conversations);
     });
 
     await _saveAllConversations();
+  }
+
+  Future<void> _renameConversation(
+    ChatConversation conversation,
+  ) async {
+    if (_isGenerating) return;
+
+    final controller =
+        TextEditingController(
+      text: conversation.title,
+    );
+
+    final newTitle =
+        await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Rename chat'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 100,
+            decoration:
+                const InputDecoration(
+              hintText:
+                  'Enter chat name...',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context)
+                    .pop();
+              },
+              child:
+                  const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context)
+                    .pop(
+                  controller.text.trim(),
+                );
+              },
+              child:
+                  const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (newTitle == null ||
+        newTitle.isEmpty ||
+        !mounted) {
+      return;
+    }
+
+    setState(() {
+      conversation.title = newTitle;
+      conversation.updatedAt =
+          DateTime.now();
+
+      _sortConversations(_conversations);
+    });
+
+    await _saveAllConversations();
+  }
+
+  Future<void> _deleteConversation(
+    ChatConversation conversation,
+  ) async {
+    if (_isGenerating) return;
+
+    final confirmed =
+        await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title:
+              const Text('Delete chat?'),
+          content: Text(
+            'Delete "${conversation.title}"? '
+            'This cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context)
+                    .pop(false);
+              },
+              child:
+                  const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context)
+                    .pop(true);
+              },
+              child:
+                  const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true ||
+        !mounted) {
+      return;
+    }
+
+    setState(() {
+      _conversations.removeWhere(
+        (item) => item.id == conversation.id,
+      );
+
+      if (_conversation?.id ==
+          conversation.id) {
+        if (_conversations.isEmpty) {
+          final newConversation =
+              _createConversation();
+
+          _conversations.add(
+            newConversation,
+          );
+
+          _conversation =
+              newConversation;
+        } else {
+          _sortConversations(
+            _conversations,
+          );
+
+          _conversation =
+              _conversations.first;
+        }
+      }
+    });
+
+    await _saveAllConversations();
+
+    _scrollToBottom();
   }
 
   Future<void> _sendMessage() async {
@@ -207,6 +363,10 @@ class _ChatScreenState
                 ? '${text.substring(0, 40)}...'
                 : text;
       }
+
+      _sortConversations(
+        _conversations,
+      );
     });
 
     _messageController.clear();
@@ -347,8 +507,13 @@ class _ChatScreenState
             conversation.id) {
           setState(() {
             _isGenerating = false;
+
             conversation.updatedAt =
                 DateTime.now();
+
+            _sortConversations(
+              _conversations,
+            );
           });
 
           await _saveAllConversations();
@@ -375,6 +540,10 @@ class _ChatScreenState
       if (_conversation != null) {
         _conversation!.updatedAt =
             DateTime.now();
+
+        _sortConversations(
+          _conversations,
+        );
       }
     });
 
@@ -489,6 +658,10 @@ class _ChatScreenState
 
       _conversation!.updatedAt =
           DateTime.now();
+
+      _sortConversations(
+        _conversations,
+      );
     });
 
     await _saveAllConversations();
@@ -524,6 +697,10 @@ class _ChatScreenState
 
       _conversation!.updatedAt =
           DateTime.now();
+
+      _sortConversations(
+        _conversations,
+      );
     });
 
     await _saveAllConversations();
@@ -594,6 +771,10 @@ class _ChatScreenState
 
       _conversation!.updatedAt =
           DateTime.now();
+
+      _sortConversations(
+        _conversations,
+      );
     });
 
     await _saveAllConversations();
@@ -657,6 +838,10 @@ class _ChatScreenState
         onSelectConversation:
             _selectConversation,
         onTogglePin: _togglePin,
+        onRenameConversation:
+            _renameConversation,
+        onDeleteConversation:
+            _deleteConversation,
         onOpenSettings: () {
           Navigator.of(context).pop();
           _openSettings();
@@ -751,166 +936,4 @@ class _ChatScreenState
                   .titleLarge,
             ),
             const SizedBox(height: 8),
-            Text(
-              'Powered by Nemotron',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessages() {
-    return ListView.builder(
-      controller: _scrollController,
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 12,
-      ),
-      itemCount: _messages.length,
-      itemBuilder: (context, index) {
-        final message = _messages[index];
-
-        final isGeneratingMessage =
-            _isGenerating &&
-                index ==
-                    _messages.length - 1 &&
-                message.isAssistant;
-
-        if (message.content.isEmpty &&
-            isGeneratingMessage) {
-          return const Padding(
-            padding:
-                EdgeInsets.all(16),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 18,
-                  height: 18,
-                  child:
-                      CircularProgressIndicator(
-                    strokeWidth: 2,
-                  ),
-                ),
-                SizedBox(width: 12),
-                Text('Thinking...'),
-              ],
-            ),
-          );
-        }
-
-        return _MessageBubble(
-          message: message,
-          onCopy: () =>
-              _copyMessage(message),
-          onEdit: message.isUser
-              ? () => _editMessage(
-                    message,
-                  )
-              : null,
-          onRegenerate:
-              message.isAssistant
-                  ? () =>
-                      _regenerateResponse(
-                        message,
-                      )
-                  : null,
-          onDelete: () =>
-              _deleteMessage(message),
-        );
-      },
-    );
-  }
-
-  Widget _buildInput() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        8,
-        16,
-        16,
-      ),
-      child: TextField(
-        controller: _messageController,
-        minLines: 1,
-        maxLines: 6,
-        textInputAction:
-            TextInputAction.newline,
-        onSubmitted: (_) {
-          if (!_isGenerating) {
-            _sendMessage();
-          }
-        },
-        decoration: InputDecoration(
-          hintText: _isGenerating
-              ? 'CYSTEM is responding...'
-              : 'Ask anything...',
-          suffixIcon: IconButton(
-            tooltip: _isGenerating
-                ? 'Stop generating'
-                : 'Send message',
-            icon: Icon(
-              _isGenerating
-                  ? Icons.stop
-                  : Icons.arrow_upward,
-            ),
-            onPressed: _isGenerating
-                ? _stopGeneration
-                : _sendMessage,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MessageBubble
-    extends StatelessWidget {
-  const _MessageBubble({
-    required this.message,
-    required this.onCopy,
-    required this.onEdit,
-    required this.onRegenerate,
-    required this.onDelete,
-  });
-
-  final ChatMessage message;
-  final VoidCallback onCopy;
-  final VoidCallback? onEdit;
-  final VoidCallback? onRegenerate;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final isUser = message.isUser;
-
-    final backgroundColor = isUser
-        ? Theme.of(context)
-            .colorScheme
-            .primary
-        : Theme.of(context)
-            .colorScheme
-            .surface;
-
-    final textColor = isUser
-        ? Theme.of(context)
-            .colorScheme
-            .onPrimary
-        : Theme.of(context)
-            .colorScheme
-            .onSurface;
-
-    return Align(
-      alignment: isUser
-          ? Alignment.centerRight
-          : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(
-          maxWidth: 600,
-        ),
-        margin:
-            const EdgeInsets.o
+        
