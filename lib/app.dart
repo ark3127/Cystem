@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'core/theme/app_theme.dart';
 import 'screens/chat_screen.dart';
 
 class CystemApp extends StatelessWidget {
@@ -10,14 +11,7 @@ class CystemApp extends StatelessWidget {
     return MaterialApp(
       title: 'CYSTEM',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurpleAccent,
-          brightness: Brightness.dark,
-        ),
-      ),
+      theme: AppTheme.darkTheme,
       home: const ChatScreen(),
     );
   }
