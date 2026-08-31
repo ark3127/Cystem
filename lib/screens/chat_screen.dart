@@ -40,37 +40,67 @@ class _ChatScreenState extends State<ChatScreen> {
       createdAt: DateTime.now(),
     );
 
+    final assistantMessageId =
+        '${DateTime.now().microsecondsSinceEpoch}_assistant';
+
+    var generatedText = '';
+
     setState(() {
       _messages.add(userMessage);
+
+      _messages.add(
+        ChatMessage(
+          id: assistantMessageId,
+          content: '',
+          role: MessageRole.assistant,
+          createdAt: DateTime.now(),
+        ),
+      );
+
       _isGenerating = true;
     });
 
     _messageController.clear();
 
     try {
-      final response =
-          await _apiService.sendMessage(_messages);
+      await for (final chunk
+          in _apiService.streamMessage(_messages.take(
+        _messages.length - 1,
+      ).toList())) {
+        generatedText += chunk;
 
-      final assistantMessage = ChatMessage(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        content: response,
-        role: MessageRole.assistant,
-        createdAt: DateTime.now(),
-      );
+        if (!mounted) return;
 
-      if (!mounted) return;
+        setState(() {
+          final index = _messages.indexWhere(
+            (message) =>
+                message.id == assistantMessageId,
+          );
 
-      setState(() {
-        _messages.add(assistantMessage);
-      });
+          if (index != -1) {
+            _messages[index] = ChatMessage(
+              id: assistantMessageId,
+              content: generatedText,
+              role: MessageRole.assistant,
+              createdAt: _messages[index].createdAt,
+            );
+          }
+        });
+      }
     } catch (error) {
       if (!mounted) return;
 
+      setState(() {
+        _messages.removeWhere(
+          (message) =>
+              message.id == assistantMessageId &&
+              message.content.isEmpty,
+        );
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Error: $error',
-          ),
+          content: Text('Error: $error'),
         ),
       );
     } finally {
@@ -104,8 +134,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   : _buildMessages(),
             ),
 
-            if (_isGenerating) _buildGeneratingIndicator(),
-
             _buildInput(),
           ],
         ),
@@ -124,7 +152,7 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.menu),
             onPressed: () {
-              // Chat sidebar comes later.
+              // Sidebar will be added later.
             },
           ),
           const SizedBox(width: 8),
@@ -141,7 +169,7 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.add),
             onPressed: () {
-              // New chat comes later.
+              // New chat functionality comes later.
             },
           ),
           IconButton(
@@ -158,7 +186,8 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment:
+              MainAxisAlignment.center,
           children: [
             const Icon(
               Icons.auto_awesome,
@@ -167,12 +196,14 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(height: 20),
             Text(
               'What can I help you with?',
-              style: Theme.of(context).textTheme.titleLarge,
+              style:
+                  Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
             Text(
               'Powered by Nemotron',
-              style: Theme.of(context).textTheme.bodyMedium,
+              style:
+                  Theme.of(context).textTheme.bodyMedium,
             ),
           ],
         ),
@@ -192,30 +223,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
         return _MessageBubble(
           message: message,
+          isGenerating:
+              _isGenerating &&
+              index == _messages.length - 1 &&
+              message.isAssistant,
         );
       },
-    );
-  }
-
-  Widget _buildGeneratingIndicator() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: 20,
-        vertical: 8,
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            height: 18,
-            width: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-            ),
-          ),
-          SizedBox(width: 12),
-          Text('CYSTEM is thinking...'),
-        ],
-      ),
     );
   }
 
@@ -232,9 +245,15 @@ class _ChatScreenState extends State<ChatScreen> {
         minLines: 1,
         maxLines: 6,
         textInputAction: TextInputAction.newline,
-        onSubmitted: (_) => _sendMessage(),
+        onSubmitted: (_) {
+          if (!_isGenerating) {
+            _sendMessage();
+          }
+        },
         decoration: InputDecoration(
-          hintText: 'Ask anything...',
+          hintText: _isGenerating
+              ? 'CYSTEM is responding...'
+              : 'Ask anything...',
           suffixIcon: IconButton(
             icon: const Icon(Icons.arrow_upward),
             onPressed: _isGenerating
@@ -250,17 +269,40 @@ class _ChatScreenState extends State<ChatScreen> {
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
+    required this.isGenerating,
   });
 
   final ChatMessage message;
+  final bool isGenerating;
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
 
+    if (message.content.isEmpty &&
+        isGenerating) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+              ),
+            ),
+            SizedBox(width: 12),
+            Text('Thinking...'),
+          ],
+        ),
+      );
+    }
+
     return Align(
-      alignment:
-          isUser ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isUser
+          ? Alignment.centerRight
+          : Alignment.centerLeft,
       child: Container(
         constraints: const BoxConstraints(
           maxWidth: 600,
@@ -274,9 +316,14 @@ class _MessageBubble extends StatelessWidget {
         ),
         decoration: BoxDecoration(
           color: isUser
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(18),
+              ? Theme.of(context)
+                  .colorScheme
+                  .primary
+              : Theme.of(context)
+                  .colorScheme
+                  .surface,
+          borderRadius:
+              BorderRadius.circular(18),
         ),
         child: Text(
           message.content,
