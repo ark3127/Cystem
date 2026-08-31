@@ -11,6 +11,7 @@ import '../services/nvidia_api_service.dart';
 import '../widgets/chat_drawer.dart';
 import '../widgets/message_actions.dart';
 import 'settings_screen.dart';
+import '../widgets/code_block.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
