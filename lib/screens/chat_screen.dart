@@ -4,6 +4,7 @@ import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
 import '../services/chat_storage_service.dart';
 import '../services/nvidia_api_service.dart';
+import '../widgets/chat_drawer.dart';
 import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -21,7 +22,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final ChatStorageService _storageService =
       ChatStorageService();
 
+  final GlobalKey<ScaffoldState> _scaffoldKey =
+      GlobalKey<ScaffoldState>();
+
+  List<ChatConversation> _conversations = [];
   ChatConversation? _conversation;
+
   bool _isGenerating = false;
   bool _isLoading = true;
 
@@ -31,55 +37,99 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _loadOrCreateConversation();
+    _loadConversations();
   }
 
-  Future<void> _loadOrCreateConversation() async {
+  Future<void> _loadConversations() async {
     final conversations =
         await _storageService.loadConversations();
 
-    if (conversations.isNotEmpty) {
-      conversations.sort(
-        (a, b) => b.updatedAt.compareTo(a.updatedAt),
-      );
+    conversations.sort(
+      (a, b) => b.updatedAt.compareTo(a.updatedAt),
+    );
 
-      _conversation = conversations.first;
-    } else {
+    if (conversations.isEmpty) {
       final now = DateTime.now();
 
-      _conversation = ChatConversation(
+      final newConversation = ChatConversation(
         id: now.microsecondsSinceEpoch.toString(),
         title: 'New Chat',
         createdAt: now,
         updatedAt: now,
       );
 
-      await _saveConversation();
+      conversations.add(newConversation);
+
+      await _storageService.saveConversations(
+        conversations,
+      );
+
+      _conversation = newConversation;
+    } else {
+      _conversation = conversations.first;
     }
 
     if (!mounted) return;
 
     setState(() {
+      _conversations = conversations;
       _isLoading = false;
     });
   }
 
-  Future<void> _saveConversation() async {
-    if (_conversation == null) return;
-
-    final conversations =
-        await _storageService.loadConversations();
-
-    conversations.removeWhere(
-      (conversation) =>
-          conversation.id == _conversation!.id,
-    );
-
-    conversations.add(_conversation!);
-
+  Future<void> _saveAllConversations() async {
     await _storageService.saveConversations(
-      conversations,
+      _conversations,
     );
+  }
+
+  Future<void> _createNewChat() async {
+    if (_isGenerating) return;
+
+    final now = DateTime.now();
+
+    final newConversation = ChatConversation(
+      id: now.microsecondsSinceEpoch.toString(),
+      title: 'New Chat',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    setState(() {
+      _conversations.add(newConversation);
+      _conversation = newConversation;
+    });
+
+    await _saveAllConversations();
+
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _selectConversation(
+    ChatConversation conversation,
+  ) async {
+    if (_isGenerating) return;
+
+    setState(() {
+      _conversation = conversation;
+    });
+
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _togglePin(
+    ChatConversation conversation,
+  ) async {
+    if (_isGenerating) return;
+
+    setState(() {
+      conversation.isPinned = !conversation.isPinned;
+      conversation.updatedAt = DateTime.now();
+    });
+
+    await _saveAllConversations();
   }
 
   Future<void> _sendMessage() async {
@@ -113,6 +163,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _conversation!.messages.add(userMessage);
       _conversation!.messages.add(assistantMessage);
+
       _conversation!.updatedAt = DateTime.now();
 
       if (_conversation!.title == 'New Chat') {
@@ -126,18 +177,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _messageController.clear();
 
-    await _saveConversation();
+    await _saveAllConversations();
 
     var generatedText = '';
 
     try {
       final messagesForApi =
           List<ChatMessage>.from(
-        _conversation!.messages
-            .where(
-              (message) =>
-                  message.id != assistantMessageId,
-            ),
+        _conversation!.messages.where(
+          (message) =>
+              message.id != assistantMessageId,
+        ),
       );
 
       await for (final chunk
@@ -155,8 +205,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
           if (index != -1) {
             _conversation!.messages[index] =
-                _conversation!.messages[index]
-                    .copyWith(
+                _conversation!.messages[index].copyWith(
               content: generatedText,
             );
           }
@@ -164,7 +213,8 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       _conversation!.updatedAt = DateTime.now();
-      await _saveConversation();
+
+      await _saveAllConversations();
     } catch (error) {
       if (!mounted) return;
 
@@ -176,7 +226,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       });
 
-      await _saveConversation();
+      await _saveAllConversations();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -217,6 +267,20 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Scaffold(
+      key: _scaffoldKey,
+
+      drawer: ChatDrawer(
+        conversations: _conversations,
+        currentConversationId: _conversation?.id,
+        onNewChat: _createNewChat,
+        onSelectConversation: _selectConversation,
+        onTogglePin: _togglePin,
+        onOpenSettings: () {
+          Navigator.of(context).pop();
+          _openSettings();
+        },
+      ),
+
       body: SafeArea(
         child: Column(
           children: [
@@ -246,7 +310,7 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.menu),
             onPressed: () {
-              // Sidebar comes next.
+              _scaffoldKey.currentState?.openDrawer();
             },
           ),
           const SizedBox(width: 8),
@@ -264,9 +328,10 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.add),
-            onPressed: () {
-              // New chat comes with the sidebar.
-            },
+            tooltip: 'New chat',
+            onPressed: _isGenerating
+                ? null
+                : _createNewChat,
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
@@ -342,9 +407,7 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         }
 
-        return _MessageBubble(
-          message: message,
-        );
+        return _MessageBubble(message: message);
       },
     );
   }
