@@ -21,9 +21,11 @@ class NvidiaApiService {
   Stream<String> streamMessage(
     List<ChatMessage> messages,
   ) {
-    late final http.Client client;
+    http.Client? client;
 
-    final controller = StreamController<String>(
+    late final StreamController<String> controller;
+
+    controller = StreamController<String>(
       onListen: () async {
         client = http.Client();
 
@@ -66,7 +68,7 @@ class NvidiaApiService {
           });
 
           final response =
-              await client.send(request);
+              await client!.send(request);
 
           if (response.statusCode != 200) {
             final errorBody =
@@ -101,8 +103,9 @@ class NvidiaApiService {
                   line.substring(5).trim();
 
               if (data == '[DONE]') {
-                await controller.close();
-                client.close();
+                if (!controller.isClosed) {
+                  await controller.close();
+                }
                 return;
               }
 
@@ -137,11 +140,13 @@ class NvidiaApiService {
             );
           }
         } finally {
-          client.close();
+          client?.close();
+          client = null;
         }
       },
       onCancel: () {
-        client.close();
+        client?.close();
+        client = null;
       },
     );
 
