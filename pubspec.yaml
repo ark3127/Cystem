@@ -1,47 +1,25 @@
 name: cystem
-description: A personal AI chatbot powered by NVIDIA Nemotron.
+description: A personal AI chat app powered by NVIDIA Nemotron.
 publish_to: "none"
 
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.5.0 <4.0.0"
+  sdk: ">=3.4.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
-
-  # State management
-  flutter_riverpod: ^2.6.1
-
-  # HTTP requests to NVIDIA API
-  http: ^1.2.2
-
-  # Secure API key storage
-  flutter_secure_storage: ^9.2.2
-
-  # Local database
-  shared_preferences: ^2.3.3
-
-  # File handling
-  file_picker: ^8.1.7
-
-  # Syntax highlighting
-  flutter_highlight: ^0.7.0
-
-  # Export and sharing
-  share_plus: ^10.1.4
-
-  # WebView for HTML artifacts
-  webview_flutter: ^4.10.0
+  flutter_secure_storage: ^10.3.1
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
