@@ -10,8 +10,8 @@ import '../services/chat_storage_service.dart';
 import '../services/nvidia_api_service.dart';
 import '../widgets/chat_drawer.dart';
 import '../widgets/message_actions.dart';
-import 'settings_screen.dart';
 import '../widgets/code_block.dart';
+import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
