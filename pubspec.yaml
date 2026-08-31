@@ -12,8 +12,15 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
+
+  # Secure API key storage
   flutter_secure_storage: ^10.3.1
+
+  # NVIDIA API requests
   http: ^1.6.0
+
+  # Local chat storage
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
