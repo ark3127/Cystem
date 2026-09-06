@@ -1,4 +1,3 @@
-import '../models/chat_tool.dart';
 import '../models/chat_tool_call.dart';
 import 'chat_tool_executor.dart';
 import 'chat_tool_registry.dart';
