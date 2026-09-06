@@ -1,6 +1,8 @@
 import 'chat_message.dart';
 
 class ChatConversation {
+  static const int currentSchemaVersion = 2;
+
   final String id;
   String title;
   final DateTime createdAt;
@@ -19,31 +21,24 @@ class ChatConversation {
 
   Map<String, dynamic> toJson() {
     return {
+      'schemaVersion': currentSchemaVersion,
       'id': id,
       'title': title,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'isPinned': isPinned,
-      'messages': messages
-          .map((message) => message.toJson())
-          .toList(),
+      'messages': messages.map((message) => message.toJson()).toList(),
     };
   }
 
-  factory ChatConversation.fromJson(
-    Map<String, dynamic> json,
-  ) {
+  factory ChatConversation.fromJson(Map<String, dynamic> json) {
     return ChatConversation(
       id: json['id'] as String,
-      title: json['title'] as String,
-      createdAt: DateTime.parse(
-        json['createdAt'] as String,
-      ),
-      updatedAt: DateTime.parse(
-        json['updatedAt'] as String,
-      ),
+      title: json['title'] as String? ?? 'New Chat',
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      updatedAt: DateTime.parse(json['updatedAt'] as String),
       isPinned: json['isPinned'] as bool? ?? false,
-      messages: (json['messages'] as List<dynamic>? ?? [])
+      messages: (json['messages'] as List<dynamic>? ?? const [])
           .map(
             (message) => ChatMessage.fromJson(
               Map<String, dynamic>.from(message as Map),
