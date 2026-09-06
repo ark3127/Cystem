@@ -83,7 +83,29 @@ class ChatGenerationService {
         }
 
         if (onToolStart != null) await onToolStart(call);
-        final result = await _toolExecutor.execute(call);
+        if (onToolMessage != null) {
+          final label = call.name == 'web_search'
+              ? '⏳ Searching the web…'
+              : '⏳ Running ${call.name}…';
+          await onToolMessage(ChatMessage(
+            id: '${DateTime.now().microsecondsSinceEpoch}_tool_status_${call.id}',
+            content: label,
+            role: MessageRole.tool,
+            createdAt: DateTime.now(),
+            toolCallId: call.id,
+            toolName: call.name,
+          ));
+        }
+
+        String result;
+        try {
+          result = await _toolExecutor.execute(call);
+        } catch (error) {
+          token.throwIfCancelled();
+          result = call.name == 'web_search'
+              ? 'Web search failed: $error\n\nPlease try the search again with a different query.'
+              : 'Tool execution failed: $error';
+        }
         token.throwIfCancelled();
         final toolMessage = ChatMessage(
           id: '${DateTime.now().microsecondsSinceEpoch}_tool_result_${call.id}',
@@ -109,22 +131,36 @@ class ChatGenerationService {
     return byId.values.toList();
   }
 
-  String _assistantText(List<ChatStreamEvent> events) => events.where((event) => event.hasText).map((event) => event.text!).join();
+  String _assistantText(List<ChatStreamEvent> events) =>
+      events.where((event) => event.hasText).map((event) => event.text!).join();
 
   String? _assistantReasoning(List<ChatStreamEvent> events) {
-    final value = events.where((event) => event.hasReasoning).map((event) => event.reasoning!).join();
+    final value = events
+        .where((event) => event.hasReasoning)
+        .map((event) => event.reasoning!)
+        .join();
     return value.isEmpty ? null : value;
   }
 
   ChatApiMetadata? _metadata(List<ChatStreamEvent> events) {
     ChatStreamEvent? latest;
     for (final event in events.reversed) {
-      if (event.responseId != null || event.model != null || event.finishReason != null || event.hasUsage) {
+      if (event.responseId != null ||
+          event.model != null ||
+          event.finishReason != null ||
+          event.hasUsage) {
         latest = event;
         break;
       }
     }
     if (latest == null) return null;
-    return ChatApiMetadata(responseId: latest.responseId, model: latest.model, finishReason: latest.finishReason, promptTokens: latest.promptTokens, completionTokens: latest.completionTokens, totalTokens: latest.totalTokens);
+    return ChatApiMetadata(
+      responseId: latest.responseId,
+      model: latest.model,
+      finishReason: latest.finishReason,
+      promptTokens: latest.promptTokens,
+      completionTokens: latest.completionTokens,
+      totalTokens: latest.totalTokens,
+    );
   }
 }
