@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,7 +6,7 @@ import 'package:cystem/models/chat_conversation.dart';
 import 'package:cystem/models/chat_message.dart';
 
 void main() {
-  group('ChatConversation', () {
+  group('ChatConversation persistence', () {
     test('round-trips the current schema', () {
       final conversation = ChatConversation(
         id: 'c1',
@@ -25,17 +25,17 @@ void main() {
 
       final decoded = ChatConversation.fromJson(conversation.toJson());
       expect(decoded.id, 'c1');
+      expect(decoded.title, 'Test');
       expect(decoded.messages.single.content, 'hello');
     });
-  });
 
-  test('malformed JSON does not need to be trusted by model code', () {
-    expect(() => jsonDecodeForTest('{not json'), throwsFormatException);
-  });
-}
+    test('version 1 bare arrays remain valid JSON', () {
+      final data = jsonDecode('[{"id":"c1"}]');
+      expect(data, isA<List<dynamic>>());
+    });
 
-Object jsonDecodeForTest(String value) {
-  // Keep this test dependency-free; it only verifies the platform decoder
-  // throws on malformed persistence data.
-  throw const FormatException();
+    test('malformed persisted JSON is detectable', () {
+      expect(() => jsonDecode('{not json'), throwsFormatException);
+    });
+  });
 }
