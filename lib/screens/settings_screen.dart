@@ -14,7 +14,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _apiKeyController = TextEditingController();
-  final _braveKeyController = TextEditingController();
+  final _tavilyKeyController = TextEditingController();
   final _systemPromptController = TextEditingController();
   final _seedController = TextEditingController();
   final _storageService = SecureStorageService();
@@ -23,7 +23,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _obscureApiKey = true;
-  bool _obscureBraveKey = true;
+  bool _obscureTavilyKey = true;
 
   late AppSettings _settings;
   double _temperature = 1.0;
@@ -40,11 +40,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     try {
       final apiKey = await _storageService.getApiKey();
-      final braveKey = await _storageService.getBraveSearchApiKey();
+      final tavilyKey = await _storageService.getTavilySearchApiKey();
       final settings = await _settingsService.load();
       if (!mounted) return;
       _apiKeyController.text = apiKey ?? '';
-      _braveKeyController.text = braveKey ?? '';
+      _tavilyKeyController.text = tavilyKey ?? '';
       _settings = settings;
       _systemPromptController.text = settings.systemPrompt;
       _temperature = settings.temperature;
@@ -77,11 +77,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         clearSeed: _seed == null,
       );
       await _storageService.saveApiKey(apiKey);
-      final braveKey = _braveKeyController.text.trim();
-      if (braveKey.isEmpty) {
-        await _storageService.deleteBraveSearchApiKey();
+      final tavilyKey = _tavilyKeyController.text.trim();
+      if (tavilyKey.isEmpty) {
+        await _storageService.deleteTavilySearchApiKey();
       } else {
-        await _storageService.saveBraveSearchApiKey(braveKey);
+        await _storageService.saveTavilySearchApiKey(tavilyKey);
       }
       await _settingsService.save(settings);
       if (!mounted) return;
@@ -106,10 +106,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _deleteBraveKey() async {
-    await _storageService.deleteBraveSearchApiKey();
+  Future<void> _deleteTavilyKey() async {
+    await _storageService.deleteTavilySearchApiKey();
     if (mounted) {
-      _braveKeyController.clear();
+      _tavilyKeyController.clear();
       _showSnack('Web search key removed');
     }
   }
@@ -129,7 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _apiKeyController.dispose();
-    _braveKeyController.dispose();
+    _tavilyKeyController.dispose();
     _systemPromptController.dispose();
     _seedController.dispose();
     super.dispose();
@@ -178,11 +178,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           _SectionHeader(icon: Icons.language_rounded, title: 'Web search', subtitle: 'Give CYSTEM access to live search results'),
           _SettingsCard(children: [
-            _SecretField(controller: _braveKeyController, obscure: _obscureBraveKey, label: 'Brave Search API key', hint: 'Optional — enables web search', onToggle: () => setState(() => _obscureBraveKey = !_obscureBraveKey)),
+            _SecretField(controller: _tavilyKeyController, obscure: _obscureTavilyKey, label: 'Tavily API key', hint: 'Optional — enables web search', onToggle: () => setState(() => _obscureTavilyKey = !_obscureTavilyKey)),
             const SizedBox(height: 8),
-            const Text('The key is stored in Android secure storage. CYSTEM sends it only to Brave Search.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
+            const Text('The key is stored in Android secure storage. CYSTEM sends it only to Tavily Search.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
             const SizedBox(height: 4),
-            TextButton.icon(onPressed: _deleteBraveKey, icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('Remove search key'), style: TextButton.styleFrom(alignment: Alignment.centerLeft, padding: EdgeInsets.zero)),
+            TextButton.icon(onPressed: _deleteTavilyKey, icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('Remove search key'), style: TextButton.styleFrom(alignment: Alignment.centerLeft, padding: EdgeInsets.zero)),
           ]),
           const SizedBox(height: 24),
           _SectionHeader(icon: Icons.key_outlined, title: 'NVIDIA API', subtitle: 'Your key stays on this device'),
