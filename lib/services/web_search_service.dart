@@ -14,7 +14,7 @@ class WebSearchService implements ChatToolExecutor {
   static const List<ChatTool> definitions = [
     ChatTool(
       name: 'web_search',
-      description: 'Search the live web for current, factual, recent, or hard-to-know information. Use this when the answer may have changed or when the user explicitly asks you to search the web. Return relevant sources and cite their URLs.',
+      description: 'Search the live web for current, factual, recent, or hard-to-know information. If the user asks to find/show an existing image rather than generate one, search for images too and return usable image URLs.',
       parameters: {
         'type': 'object',
         'properties': {
@@ -39,9 +39,7 @@ class WebSearchService implements ChatToolExecutor {
       if (query is! String || query.trim().isEmpty) return 'web_search requires a non-empty query.';
 
       final apiKey = await _storage.getTavilySearchApiKey();
-      if (apiKey == null || apiKey.trim().isEmpty) {
-        return 'Web search is not configured. Add a Tavily API key in Settings → Web search.';
-      }
+      if (apiKey == null || apiKey.trim().isEmpty) return 'Web search is not configured. Add a Tavily API key in Settings → Web search.';
 
       final client = _clientFactory();
       try {
@@ -60,17 +58,16 @@ class WebSearchService implements ChatToolExecutor {
                 'max_results': 6,
                 'include_answer': false,
                 'include_raw_content': false,
-                'include_images': false,
+                'include_images': true,
               }),
             )
             .timeout(const Duration(seconds: 20));
 
-        if (response.statusCode != 200) {
-          return 'Web search failed with HTTP ${response.statusCode}. ${_errorMessage(response.body)}';
-        }
+        if (response.statusCode != 200) return 'Web search failed with HTTP ${response.statusCode}. ${_errorMessage(response.body)}';
 
         final body = jsonDecode(response.body);
         final results = body is Map ? body['results'] : null;
+        final images = body is Map ? body['images'] : null;
         if (results is! List || results.isEmpty) return 'No web results found for "$query".';
 
         final buffer = StringBuffer('Search results for "$query":\n\n');
@@ -87,6 +84,26 @@ class WebSearchService implements ChatToolExecutor {
           if (snippet.isNotEmpty) buffer.writeln(snippet);
           buffer.writeln();
           if (index >= 6) break;
+        }
+
+        if (images is List && images.isNotEmpty) {
+          buffer.writeln('WEB IMAGE RESULTS:\n');
+          var imageIndex = 0;
+          for (final item in images) {
+            if (item is String && item.startsWith('http')) {
+              imageIndex++;
+              buffer.writeln('![Web image $imageIndex]($item)');
+              if (imageIndex >= 6) break;
+            } else if (item is Map) {
+              final imageUrl = item['url'] ?? item['image_url'];
+              if (imageUrl is String && imageUrl.startsWith('http')) {
+                imageIndex++;
+                final description = item['description'] is String ? _clean(item['description'] as String) : 'Web image $imageIndex';
+                buffer.writeln('![$description]($imageUrl)');
+                if (imageIndex >= 6) break;
+              }
+            }
+          }
         }
         return buffer.toString().trim();
       } finally {
