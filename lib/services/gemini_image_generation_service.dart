@@ -78,6 +78,10 @@ class GeminiImageGenerationService {
       String? text;
       ChatAttachment? image;
       for (final rawPart in parts.whereType<Map>()) {
+        // Gemini 3 image models can emit interim images while thinking. Only
+        // use the final non-thought image in the visible CYSTEM response.
+        if (rawPart['thought'] == true) continue;
+
         final partText = rawPart['text'];
         if (partText is String && partText.trim().isNotEmpty) {
           text = text == null ? partText.trim() : '$text\n${partText.trim()}';
@@ -88,7 +92,7 @@ class GeminiImageGenerationService {
           final data = inlineData['data'];
           final mimeType = inlineData['mimeType'] ?? inlineData['mime_type'];
           if (data is String && data.isNotEmpty && mimeType is String && mimeType.isNotEmpty) {
-            image ??= ChatAttachment(
+            image = ChatAttachment(
               id: '${DateTime.now().microsecondsSinceEpoch}_gemini_image',
               type: ChatAttachmentType.image,
               mimeType: mimeType,
