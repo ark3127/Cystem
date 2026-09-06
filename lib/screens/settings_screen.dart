@@ -87,7 +87,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         seed: _seed,
         clearSeed: _seed == null,
         themeMode: _themeMode,
-        accentColor: _accentColor.value,
+        accentColor: _accentColor.toARGB32(),
       );
       await _storageService.saveApiKey(apiKey);
       final tavilyKey = _tavilyKeyController.text.trim();
@@ -218,7 +218,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               contentPadding: EdgeInsets.zero,
               leading: Container(width: 42, height: 42, decoration: BoxDecoration(color: _accentColor, shape: BoxShape.circle)),
               title: const Text('Accent colour', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text('#${_accentColor.value.toRadixString(16).substring(2).toUpperCase()}'),
+              subtitle: Text('#${_accentColor.toARGB32().toRadixString(16).substring(2).toUpperCase()}'),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: _pickAccentColor,
             ),
@@ -246,9 +246,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           _SectionHeader(icon: Icons.visibility_outlined, title: 'Vision', subtitle: 'Let Gemini describe images for Nemotron'),
           _SettingsCard(children: [
-            _SecretField(controller: _geminiKeyController, obscure: _obscureGeminiKey, label: 'Gemini API key', hint: 'Optional — enables image understanding', onToggle: () => setState(() => _obscureGeminiKey = !_obscureGeminiKey)),
+            _SecretField(controller: _geminiKeyController, obscure: _obscureGeminiKey, label: 'Gemini API key', hint: 'Optional — enables image understanding and generation', onToggle: () => setState(() => _obscureGeminiKey = !_obscureGeminiKey)),
             const SizedBox(height: 8),
-            const Text('CYSTEM sends attached images to Gemini for detailed visual analysis, then gives that analysis to Nemotron as text context. The key is stored in Android secure storage.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
+            const Text('CYSTEM sends attached images to Gemini for detailed visual analysis, then gives that analysis to Nemotron as text context. When you ask for an image, Nemotron writes the description and Gemini generates the image. The key is stored in Android secure storage.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
             const SizedBox(height: 4),
             TextButton.icon(onPressed: _deleteGeminiKey, icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('Remove Gemini key'), style: TextButton.styleFrom(alignment: Alignment.centerLeft, padding: EdgeInsets.zero)),
           ]),
