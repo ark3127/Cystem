@@ -82,7 +82,7 @@ class _AccentColorPickerState extends State<AccentColorPicker> {
           children: [
             Container(width: 44, height: 44, decoration: BoxDecoration(color: color, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).colorScheme.outline))),
             const SizedBox(width: 12),
-            Expanded(child: Text('#${color.value.toRadixString(16).substring(2).toUpperCase()}', style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600))),
+            Expanded(child: Text('#${color.toARGB32().toRadixString(16).substring(2).toUpperCase()}', style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600))),
             FilledButton(onPressed: () => Navigator.pop(context, color), child: const Text('Use color')),
           ],
         ),
