@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cystem/models/chat_completion_result.dart';
 import 'package:cystem/models/chat_message.dart';
+import 'package:cystem/services/nvidia_api_service.dart';
 import 'package:cystem/services/structured_output_service.dart';
 
 void main() {
