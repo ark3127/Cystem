@@ -7,7 +7,7 @@ void main() {
   testWidgets('CYSTEM theme renders', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        theme: AppTheme.darkTheme,
+        theme: AppTheme.darkTheme(),
         home: const Scaffold(
           body: Center(child: Text('CYSTEM')),
         ),

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../models/app_settings.dart';
 import '../../services/app_settings_service.dart';
 
 class AppThemeController extends ChangeNotifier {
