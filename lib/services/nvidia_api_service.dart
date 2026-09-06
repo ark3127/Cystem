@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_message.dart';
+import 'app_settings_service.dart';
 import 'secure_storage_service.dart';
 
 class NvidiaApiException implements Exception {
@@ -27,12 +28,15 @@ class NvidiaApiService {
 
   final SecureStorageService _secureStorageService =
       SecureStorageService();
+  final AppSettingsService _settingsService = AppSettingsService();
 
   Stream<String> streamMessage(
     List<ChatMessage> messages, {
-    String reasoningEffort = 'max',
-    double temperature = 1.0,
-    int maxTokens = 16384,
+    String? reasoningEffort,
+    double? temperature,
+    int? maxTokens,
+    int? seed,
+    bool clearSeed = false,
   }) {
     http.Client? client;
     late final StreamController<String> controller;
@@ -50,6 +54,30 @@ class NvidiaApiService {
             );
           }
 
+          final savedSettings = await _settingsService.load();
+          final effectiveReasoningEffort =
+              reasoningEffort ?? savedSettings.reasoningEffort;
+          final effectiveTemperature =
+              temperature ?? savedSettings.temperature;
+          final effectiveMaxTokens =
+              maxTokens ?? savedSettings.maxTokens;
+          final effectiveSeed =
+              clearSeed ? null : (seed ?? savedSettings.seed);
+
+          final apiMessages = <Map<String, dynamic>>[];
+          final systemPrompt = savedSettings.systemPrompt.trim();
+
+          if (systemPrompt.isNotEmpty) {
+            apiMessages.add({
+              'role': 'system',
+              'content': systemPrompt,
+            });
+          }
+
+          apiMessages.addAll(
+            messages.map((message) => message.toApiJson()),
+          );
+
           final request = http.Request(
             'POST',
             Uri.parse(_baseUrl),
@@ -63,12 +91,11 @@ class NvidiaApiService {
 
           request.body = jsonEncode({
             'model': model,
-            'messages': messages
-                .map((message) => message.toApiJson())
-                .toList(),
-            'temperature': temperature.clamp(0.0, 1.0),
-            'max_tokens': maxTokens.clamp(1, 65536),
-            'reasoning_effort': reasoningEffort,
+            'messages': apiMessages,
+            'temperature': effectiveTemperature.clamp(0.0, 1.0),
+            'max_tokens': effectiveMaxTokens.clamp(1, 65536),
+            'reasoning_effort': effectiveReasoningEffort,
+            if (effectiveSeed != null) 'seed': effectiveSeed,
             'stream': true,
             'stream_options': {
               'include_usage': true,
@@ -120,12 +147,12 @@ class NvidiaApiService {
                 }
 
                 final choice = choices.first;
-                if (choice is! Map<String, dynamic>) {
+                if (choice is! Map) {
                   continue;
                 }
 
                 final delta = choice['delta'];
-                if (delta is! Map<String, dynamic>) {
+                if (delta is! Map) {
                   continue;
                 }
 
