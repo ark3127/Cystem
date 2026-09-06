@@ -24,7 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   late AppSettings _settings;
   double _temperature = 1.0;
-  String _reasoningEffort = 'max';
+  String _reasoningEffort = 'high';
   int _maxTokens = 16384;
   int? _seed;
 
@@ -144,7 +144,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          Text('Kimi K3', style: Theme.of(context).textTheme.headlineSmall),
+          Text('Nemotron 3 Super 120B', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
           const Text('Powered by NVIDIA NIM.'),
           const SizedBox(height: 28),
@@ -171,13 +171,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 32),
           Text('Reasoning', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
-          const Text('Kimi K3 always reasons. Choose how much reasoning effort it should use.'),
+          const Text('Nemotron supports no reasoning, low-effort reasoning, or full reasoning.'),
           const SizedBox(height: 8),
           SegmentedButton<String>(
             segments: const [
+              ButtonSegment(value: 'none', label: Text('Off')),
               ButtonSegment(value: 'low', label: Text('Low')),
               ButtonSegment(value: 'high', label: Text('High')),
-              ButtonSegment(value: 'max', label: Text('Max')),
             ],
             selected: {_reasoningEffort},
             onSelectionChanged: (selection) => setState(() => _reasoningEffort = selection.first),
@@ -192,22 +192,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             label: _temperature.toStringAsFixed(2),
             onChanged: (value) => setState(() => _temperature = value),
           ),
-          const Text('Higher values produce more varied responses. Kimi K3 recommends 1.0.'),
+          const Text('NVIDIA recommends 1.0 for Nemotron 3 Super.'),
           const SizedBox(height: 24),
           Text('Maximum output  ${_formatTokens(_maxTokens)} tokens', style: Theme.of(context).textTheme.titleMedium),
           Slider(
             value: _maxTokens.toDouble(),
             min: 1024,
-            max: 65536,
-            divisions: 63,
+            max: 32768,
+            divisions: 31,
             label: _maxTokens.toString(),
             onChanged: (value) => setState(() => _maxTokens = value.round()),
           ),
-          const Text('Maximum generated output. Kimi K3 supports up to 65,536 tokens.'),
+          const Text('Maximum generated output. Nemotron 3 Super supports up to 32,768 tokens.'),
           const SizedBox(height: 28),
           Text('System instructions', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
-          const Text('Instructions sent to Kimi K3 as the system message on every request.'),
+          const Text('Instructions sent to Nemotron as the system message on every request.'),
           const SizedBox(height: 12),
           TextField(
             controller: _systemPromptController,
