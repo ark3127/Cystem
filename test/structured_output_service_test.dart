@@ -6,7 +6,7 @@ import 'package:cystem/services/nvidia_api_service.dart';
 import 'package:cystem/services/structured_output_service.dart';
 
 void main() {
-  final service = StructuredOutputService(null as dynamic);
+  final service = StructuredOutputService(NvidiaApiService());
 
   ChatCompletionResult result(String content, {String? finishReason}) {
     return ChatCompletionResult(
