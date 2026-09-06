@@ -76,8 +76,7 @@ class WebSearchService implements ChatToolExecutor {
           if (title is! String || url is! String) continue;
           index++;
           final snippet = description is String ? _clean(description) : '';
-          buffer.writeln('[$index] $title');
-          buffer.writeln(url);
+          buffer.writeln('[$index] [$title]($url)');
           if (snippet.isNotEmpty) buffer.writeln(snippet);
           buffer.writeln();
           if (index >= 6) break;
