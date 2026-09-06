@@ -351,9 +351,7 @@ class _ChatScreenState extends State<ChatScreen> {
             conversation.messages.removeAt(index);
           }
           _isGenerating = false;
-          if (identical(_generationCancellationToken, cancellationToken)) {
-            _generationCancellationToken = null;
-          }
+          if (identical(_generationCancellationToken, cancellationToken)) _generationCancellationToken = null;
         });
         await _saveAllConversations();
         if (!cancelled) _showSnack('Error: $error');
@@ -363,9 +361,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!mounted || _conversation?.id != conversation.id) return;
         setState(() {
           _isGenerating = false;
-          if (identical(_generationCancellationToken, cancellationToken)) {
-            _generationCancellationToken = null;
-          }
+          if (identical(_generationCancellationToken, cancellationToken)) _generationCancellationToken = null;
           conversation.updatedAt = DateTime.now();
         });
         await _saveAllConversations();
@@ -385,12 +381,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() {
       if (_conversation != null) {
-        final index = _conversation!.messages.indexWhere(
-          (message) => message.role == MessageRole.assistant &&
-              message.content.isEmpty &&
-              message.reasoningContent == null &&
-              message.toolCalls.isEmpty,
-        );
+        final index = _conversation!.messages.indexWhere((message) =>
+            message.role == MessageRole.assistant &&
+            message.content.isEmpty &&
+            message.reasoningContent == null &&
+            message.toolCalls.isEmpty);
         if (index != -1) _conversation!.messages.removeAt(index);
         _conversation!.updatedAt = DateTime.now();
       }
@@ -466,15 +461,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (confirmed != true || !mounted) return;
     final index = _conversation!.messages.indexWhere((item) => item.id == message.id);
     if (index == -1) return;
-    setState(() {
-      _conversation!.messages = _conversation!.messages.take(index).toList();
-      _conversation!.updatedAt = DateTime.now();
-    });
+    setState(() => _conversation!.messages = _conversation!.messages.take(index).toList());
     await _saveAllConversations();
   }
 
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  void _useSuggestion(String prompt) {
+    if (!_isGenerating) _sendUserText(prompt);
   }
 
   void _scrollToBottom({bool jump = false}) {
@@ -484,16 +476,26 @@ class _ChatScreenState extends State<ChatScreen> {
       if (jump) {
         _scrollController.jumpTo(target);
       } else {
-        _scrollController.animateTo(target, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+        _scrollController.animateTo(target, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
       }
     });
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _openSettings() {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
   @override
   void dispose() {
     _generationCancellationToken?.cancel();
     _generationSubscription?.cancel();
+    _messageController.removeListener(_onInputChanged);
     _messageController.dispose();
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -505,31 +507,46 @@ class _ChatScreenState extends State<ChatScreen> {
       key: _scaffoldKey,
       drawer: ChatDrawer(
         conversations: _conversations,
-        selectedConversation: _conversation,
+        currentConversationId: _conversation?.id,
         onNewChat: _createNewChat,
         onSelectConversation: _selectConversation,
+        onTogglePin: _togglePin,
         onRenameConversation: _renameConversation,
         onDeleteConversation: _deleteConversation,
-        onTogglePin: _togglePin,
-        onOpenSettings: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
+        onOpenSettings: () {
+          Navigator.pop(context);
+          _openSettings();
+        },
       ),
-      appBar: AppBar(
-        title: const Text('CYSTEM'),
-        actions: [IconButton(onPressed: () => _scaffoldKey.currentState?.openDrawer(), icon: const Icon(Icons.menu))],
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(child: _messages.isEmpty ? _buildWelcome() : _buildMessages()),
+            _buildInput(),
+          ],
+        ),
       ),
-      body: Column(
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      child: Row(
         children: [
+          IconButton(tooltip: 'Chats', icon: const Icon(Icons.menu), onPressed: () => _scaffoldKey.currentState?.openDrawer()),
           Expanded(
-            child: _messages.isEmpty
-                ? _buildWelcome()
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) => _buildMessageBubble(_messages[index]),
-                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_conversation?.title ?? 'CYSTEM', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                Text('Kimi K3', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              ],
+            ),
           ),
-          _buildComposer(),
+          IconButton(tooltip: 'New chat', icon: const Icon(Icons.add), onPressed: _isGenerating ? null : _createNewChat),
+          IconButton(tooltip: 'Settings', icon: const Icon(Icons.settings_outlined), onPressed: _openSettings),
         ],
       ),
     );
@@ -538,140 +555,345 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildWelcome() {
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.auto_awesome, size: 52),
-            const SizedBox(height: 16),
-            Text('What can I do for you?', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              alignment: WrapAlignment.center,
-              children: [
-                _suggestion('Explain something'),
-                _suggestion('Open a website'),
-                _suggestion('Find a place'),
-              ],
-            ),
-          ],
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 650),
+          child: Column(
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(color: Theme.of(context).colorScheme.primaryContainer, shape: BoxShape.circle),
+                child: Icon(Icons.auto_awesome, size: 34, color: Theme.of(context).colorScheme.onPrimaryContainer),
+              ),
+              const SizedBox(height: 20),
+              Text('What can I help you with?', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text('Ask questions, share images, or let CYSTEM use your phone tools.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              const SizedBox(height: 28),
+              _SuggestionCard(icon: Icons.lightbulb_outline, title: 'Explain a complex topic', subtitle: 'Break something difficult down simply', onTap: () => _useSuggestion('Explain a complex topic to me in a simple and easy-to-understand way.')),
+              _SuggestionCard(icon: Icons.code, title: 'Help me write code', subtitle: 'Solve a programming problem with me', onTap: () => _useSuggestion('Help me solve a programming problem. Ask me what I am working on first.')),
+              _SuggestionCard(icon: Icons.psychology_outlined, title: 'Brainstorm ideas', subtitle: 'Explore creative ideas and possibilities', onTap: () => _useSuggestion('Help me brainstorm some creative ideas. Ask me what I want to brainstorm first.')),
+              _SuggestionCard(icon: Icons.edit_outlined, title: 'Help me write something', subtitle: 'Draft, rewrite, or improve my writing', onTap: () => _useSuggestion('Help me write something. Ask me what I want to write first.')),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _suggestion(String text) => ActionChip(
-        label: Text(text),
-        onPressed: () => _sendUserText(text),
-      );
+  Widget _buildMessages() {
+    return Stack(
+      children: [
+        ListView.builder(
+          controller: _scrollController,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+          itemCount: _messages.length,
+          itemBuilder: (context, index) {
+            final message = _messages[index];
+            final generating = _isGenerating && index == _messages.length - 1 && message.isAssistant;
+            return _MessageBubble(
+              message: message,
+              isGenerating: generating,
+              onCopy: message.content.isEmpty ? null : () => _copyMessage(message),
+              onEdit: message.isUser ? () => _editMessage(message) : null,
+              onRegenerate: message.isAssistant && !message.isTool ? () => _regenerateResponse(message) : null,
+              onDelete: () => _deleteMessage(message),
+            );
+          },
+        ),
+        if (!_userIsNearBottom && _messages.isNotEmpty)
+          Positioned(
+            right: 20,
+            bottom: 16,
+            child: FloatingActionButton.small(
+              heroTag: 'scroll_to_bottom',
+              tooltip: 'Jump to latest',
+              onPressed: () {
+                _userIsNearBottom = true;
+                _scrollToBottom(jump: true);
+              },
+              child: const Icon(Icons.keyboard_arrow_down),
+            ),
+          ),
+      ],
+    );
+  }
 
-  Widget _buildComposer() {
-    return SafeArea(
+  Widget _buildInput() {
+    final canSend = _messageController.text.trim().isNotEmpty || _pendingAttachments.isNotEmpty;
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_pendingAttachments.isNotEmpty)
-              SizedBox(
-                height: 76,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _pendingAttachments.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final attachment = _pendingAttachments[index];
-                    return Stack(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.memory(attachment.data, width: 76, height: 76, fit: BoxFit.cover),
-                        ),
-                        Positioned(
-                          right: 2,
-                          top: 2,
-                          child: IconButton.filledTonal(
-                            iconSize: 18,
-                            onPressed: () => _removePendingAttachment(attachment.id),
-                            icon: const Icon(Icons.close),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
+            if (_pendingAttachments.isNotEmpty) _buildAttachmentStrip(),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
               ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                IconButton(onPressed: _isGenerating ? null : _pickImage, icon: const Icon(Icons.add_photo_alternate_outlined)),
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    minLines: 1,
-                    maxLines: 6,
-                    textInputAction: TextInputAction.newline,
-                    decoration: const InputDecoration(hintText: 'Message Cystem...'),
+              child: TextField(
+                controller: _messageController,
+                minLines: 1,
+                maxLines: 6,
+                textCapitalization: TextCapitalization.sentences,
+                textInputAction: TextInputAction.newline,
+                decoration: InputDecoration(
+                  hintText: _isGenerating ? 'CYSTEM is thinking...' : 'Message CYSTEM',
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+                  prefixIcon: IconButton(tooltip: 'Add image', icon: const Icon(Icons.add), onPressed: _isGenerating ? null : _pickImage),
+                  suffixIcon: Padding(
+                    padding: const EdgeInsets.only(right: 5),
+                    child: IconButton.filled(
+                      tooltip: _isGenerating ? 'Stop generating' : 'Send message',
+                      icon: Icon(_isGenerating ? Icons.stop_rounded : Icons.arrow_upward_rounded),
+                      onPressed: _isGenerating ? _stopGeneration : canSend ? _sendMessage : null,
+                    ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                _isGenerating
-                    ? IconButton.filled(onPressed: _stopGeneration, icon: const Icon(Icons.stop))
-                    : IconButton.filled(onPressed: _sendMessage, icon: const Icon(Icons.arrow_upward)),
-              ],
+                onSubmitted: (_) {
+                  if (!_isGenerating && canSend) _sendMessage();
+                },
+              ),
             ),
+            const SizedBox(height: 5),
+            Text('CYSTEM can make phone actions only after you confirm them.', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMessageBubble(ChatMessage message) {
+  Widget _buildAttachmentStrip() {
+    return SizedBox(
+      height: 92,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(left: 4, right: 4, bottom: 7),
+        itemCount: _pendingAttachments.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) {
+          final attachment = _pendingAttachments[index];
+          return _AttachmentPreview(attachment: attachment, onRemove: () => _removePendingAttachment(attachment.id));
+        },
+      ),
+    );
+  }
+}
+
+class _SuggestionCard extends StatelessWidget {
+  const _SuggestionCard({required this.icon, required this.title, required this.subtitle, required this.onTap});
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, size: 25),
+              const SizedBox(width: 15),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)), const SizedBox(height: 3), Text(subtitle, style: Theme.of(context).textTheme.bodySmall)])),
+              const SizedBox(width: 8),
+              const Icon(Icons.arrow_forward_ios_rounded, size: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AttachmentPreview extends StatelessWidget {
+  const _AttachmentPreview({required this.attachment, required this.onRemove});
+  final ChatAttachment attachment;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Image.memory(
+            decodeAttachmentImage(attachment),
+            width: 82,
+            height: 82,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(width: 82, height: 82, color: Theme.of(context).colorScheme.surfaceContainerHighest, child: const Icon(Icons.broken_image_outlined)),
+          ),
+        ),
+        Positioned(right: -7, top: -7, child: IconButton.filledTonal(visualDensity: VisualDensity.compact, iconSize: 17, tooltip: 'Remove image', onPressed: onRemove, icon: const Icon(Icons.close))),
+      ],
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({required this.message, required this.isGenerating, required this.onCopy, required this.onEdit, required this.onRegenerate, required this.onDelete});
+  final ChatMessage message;
+  final bool isGenerating;
+  final VoidCallback? onCopy;
+  final VoidCallback? onEdit;
+  final VoidCallback? onRegenerate;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    if (message.isTool) return _buildToolMessage(context);
+    final scheme = Theme.of(context).colorScheme;
     final isUser = message.isUser;
+    final background = isUser ? scheme.primary : scheme.surfaceContainerLow;
+    final foreground = isUser ? scheme.onPrimary : scheme.onSurface;
+
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 760),
+        constraints: const BoxConstraints(maxWidth: 720),
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(16, 13, 10, 7),
         decoration: BoxDecoration(
-          color: isUser ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(18),
+          color: background,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(20),
+            topRight: const Radius.circular(20),
+            bottomLeft: Radius.circular(isUser ? 20 : 5),
+            bottomRight: Radius.circular(isUser ? 5 : 20),
+          ),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (message.attachments.isNotEmpty)
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: message.attachments.map((attachment) => ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.memory(attachment.data, width: 180, height: 180, fit: BoxFit.cover),
-                )).toList(),
-              ),
-            if (message.reasoningContent != null && message.reasoningContent!.isNotEmpty)
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: EdgeInsets.zero,
-                title: const Text('Reasoning'),
-                children: [Align(alignment: Alignment.centerLeft, child: Text(message.reasoningContent!))],
-              ),
+            if (message.attachments.isNotEmpty) _buildImages(context),
+            if (message.attachments.isNotEmpty && message.content.isNotEmpty) const SizedBox(height: 10),
+            if (!isUser && message.reasoningContent != null && message.reasoningContent!.isNotEmpty)
+              _ReasoningSection(reasoning: message.reasoningContent!, textColor: foreground, isGenerating: isGenerating),
+            if (message.content.isEmpty && isGenerating) _ThinkingIndicator(color: foreground),
             if (message.content.isNotEmpty)
-              MarkdownBody(
-                data: message.content,
-                selectable: true,
-                builders: {'code': CodeBlockBuilder()},
-              ),
-            if (message.content.isEmpty && message.reasoningContent == null && message.isAssistant && _isGenerating)
-              const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))),
-            if (message.isAssistant && message.content.isNotEmpty)
-              MessageActions(message: message, onCopy: () => _copyMessage(message), onEdit: () => _editMessage(message), onRegenerate: () => _regenerateResponse(message), onDelete: () => _deleteMessage(message)),
+              isUser
+                  ? SelectableText(message.content, style: TextStyle(color: foreground, fontSize: 16, height: 1.4))
+                  : MarkdownBody(
+                      data: message.content,
+                      selectable: true,
+                      builders: {'pre': CodeBlockBuilder()},
+                      styleSheet: MarkdownStyleSheet(
+                        p: TextStyle(color: foreground, fontSize: 16, height: 1.45),
+                        h1: TextStyle(color: foreground, fontSize: 24, fontWeight: FontWeight.bold),
+                        h2: TextStyle(color: foreground, fontSize: 21, fontWeight: FontWeight.bold),
+                        h3: TextStyle(color: foreground, fontSize: 18, fontWeight: FontWeight.bold),
+                        code: TextStyle(color: foreground, fontFamily: 'monospace'),
+                        codeblockDecoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+            if (onCopy != null || onEdit != null || onRegenerate != null)
+              Align(alignment: Alignment.centerRight, child: MessageActions(isUser: isUser, onCopy: onCopy, onEdit: onEdit, onRegenerate: onRegenerate, onDelete: onDelete)),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildToolMessage(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 720),
+        margin: const EdgeInsets.only(left: 8, bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.build_circle_outlined, size: 18, color: scheme.onSecondaryContainer),
+            const SizedBox(width: 9),
+            Expanded(child: Text(message.toolName == null ? message.content : '${message.toolName}: ${message.content}', style: TextStyle(color: scheme.onSecondaryContainer, fontSize: 13))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImages(BuildContext context) {
+    if (message.attachments.length == 1) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Image.memory(decodeAttachmentImage(message.attachments.first), height: 240, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined))),
+      );
+    }
+    return SizedBox(
+      height: 180,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: message.attachments.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) => ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Image.memory(decodeAttachmentImage(message.attachments[index]), width: 180, height: 180, fit: BoxFit.cover),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReasoningSection extends StatelessWidget {
+  const _ReasoningSection({required this.reasoning, required this.textColor, required this.isGenerating});
+  final String reasoning;
+  final Color textColor;
+  final bool isGenerating;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(bottom: 8),
+          initiallyExpanded: isGenerating,
+          leading: Icon(isGenerating ? Icons.psychology : Icons.psychology_outlined, size: 20),
+          title: Text(isGenerating ? 'Thinking…' : 'Reasoning', style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.w600)),
+          children: [Align(alignment: Alignment.centerLeft, child: SelectableText(reasoning, style: TextStyle(color: textColor.withValues(alpha: 0.78), fontSize: 14, height: 1.4)))],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThinkingIndicator extends StatelessWidget {
+  const _ThinkingIndicator({required this.color});
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(width: 17, height: 17, child: CircularProgressIndicator(strokeWidth: 2, color: color)),
+        const SizedBox(width: 10),
+        Text('Thinking…', style: TextStyle(color: color.withValues(alpha: 0.75), fontSize: 14)),
+      ],
     );
   }
 }
