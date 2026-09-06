@@ -69,8 +69,6 @@ class ChatGenerationService {
         } else {
           preparedMessages.add(
             message.copyWith(
-              // Generated images are for the UI/history, not multimodal input
-              // to Nemotron. Their hidden Gemini context is still preserved.
               attachments: const [],
             ),
           );
@@ -86,7 +84,7 @@ class ChatGenerationService {
         }
 
         final events = <ChatStreamEvent>[];
-        final apiMessages = _messagesForNemotron(preparedMessages);
+        final apiMessages = _messagesForNemotron(preparedMessages, imageRequest: wantsImage);
         await for (final event in _apiService.streamMessage(
           apiMessages,
           tools: _toolRegistry.tools,
@@ -179,16 +177,21 @@ class ChatGenerationService {
     }
   }
 
-  List<ChatMessage> _messagesForNemotron(List<ChatMessage> messages) {
-    return messages.map((message) {
+  List<ChatMessage> _messagesForNemotron(
+    List<ChatMessage> messages, {
+    required bool imageRequest,
+  }) {
+    return messages.asMap().entries.map((entry) {
+      final message = entry.value;
       final hiddenContext = message.backendContext?.trim();
-      if (hiddenContext == null || hiddenContext.isEmpty) {
-        return message.copyWith(attachments: const []);
+      var content = message.content;
+      if (hiddenContext != null && hiddenContext.isNotEmpty) {
+        content = '''$content\n\n[BACKGROUND IMAGE CONTEXT — Gemini]\n$hiddenContext\n[END BACKGROUND IMAGE CONTEXT]''';
       }
-      return message.copyWith(
-        content: '''${message.content}\n\n[BACKGROUND IMAGE CONTEXT — Gemini]\n$hiddenContext\n[END BACKGROUND IMAGE CONTEXT]''',
-        attachments: const [],
-      );
+      if (imageRequest && entry.key == messages.length - 1 && message.isUser) {
+        content = '''$content\n\n[IMAGE GENERATION INSTRUCTION — BACKEND ONLY]\nThe user is requesting an image. Answer the user normally, but make your response a detailed, direct visual description/prompt suitable for a Gemini image-generation model. Do not claim that you generated or displayed the image yourself. The backend will send your response directly to Gemini after your text is shown to the user.\n[END IMAGE GENERATION INSTRUCTION]''';
+      }
+      return message.copyWith(content: content, attachments: const []);
     }).toList();
   }
 
