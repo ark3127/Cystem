@@ -24,6 +24,12 @@ class ImageAttachmentService {
     final bytes = await file.readAsBytes();
     final mimeType = _mimeType(file.mimeType, file.name);
 
+    if (!_supportedMimeTypes.contains(mimeType)) {
+      throw UnsupportedError(
+        'This image format is not supported. Please choose a JPEG, PNG, WEBP, or GIF image.',
+      );
+    }
+
     return ChatAttachment(
       id: '${DateTime.now().microsecondsSinceEpoch}_${file.name}',
       type: ChatAttachmentType.image,
@@ -35,7 +41,7 @@ class ImageAttachmentService {
 
   String _mimeType(String? reported, String name) {
     if (reported != null && reported.startsWith('image/')) {
-      return reported;
+      return reported.toLowerCase();
     }
 
     final lower = name.toLowerCase();
@@ -43,11 +49,16 @@ class ImageAttachmentService {
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.webp')) return 'image/webp';
     if (lower.endsWith('.gif')) return 'image/gif';
-    if (lower.endsWith('.heic')) return 'image/heic';
-    if (lower.endsWith('.heif')) return 'image/heif';
 
     return 'image/jpeg';
   }
+
+  static const Set<String> _supportedMimeTypes = {
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+  };
 }
 
 Uint8List decodeAttachmentImage(ChatAttachment attachment) {
