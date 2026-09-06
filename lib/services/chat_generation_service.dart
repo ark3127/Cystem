@@ -1,3 +1,4 @@
+import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/chat_stream_event.dart';
 import '../models/chat_tool_call.dart';
@@ -6,10 +7,11 @@ import 'chat_cancellation_token.dart';
 import 'chat_tool_argument_validator.dart';
 import 'chat_tool_executor.dart';
 import 'chat_tool_registry.dart';
+import 'gemini_image_generation_service.dart';
 import 'gemini_vision_service.dart';
 import 'nvidia_api_service.dart';
 
-/// Orchestrates Nemotron responses, Gemini vision, and model-requested tools.
+/// Orchestrates Nemotron responses, Gemini vision/image generation, and tools.
 class ChatGenerationService {
   ChatGenerationService({
     NvidiaApiService? apiService,
@@ -17,12 +19,14 @@ class ChatGenerationService {
     ChatToolExecutor? toolExecutor,
     ChatToolArgumentValidator? argumentValidator,
     GeminiVisionService? visionService,
+    GeminiImageGenerationService? imageGenerationService,
     BackgroundExecutionService? backgroundService,
   })  : _apiService = apiService ?? NvidiaApiService(),
         _toolRegistry = toolRegistry ?? ChatToolRegistry(),
         _toolExecutor = toolExecutor ?? const UnavailableToolExecutor(),
         _argumentValidator = argumentValidator ?? const ChatToolArgumentValidator(),
         _visionService = visionService ?? GeminiVisionService(),
+        _imageGenerationService = imageGenerationService ?? GeminiImageGenerationService(),
         _backgroundService = backgroundService ?? BackgroundExecutionService();
 
   static const int maxToolRounds = 8;
@@ -32,6 +36,7 @@ class ChatGenerationService {
   final ChatToolExecutor _toolExecutor;
   final ChatToolArgumentValidator _argumentValidator;
   final GeminiVisionService _visionService;
+  final GeminiImageGenerationService _imageGenerationService;
   final BackgroundExecutionService _backgroundService;
 
   ChatToolRegistry get toolRegistry => _toolRegistry;
@@ -40,26 +45,39 @@ class ChatGenerationService {
     List<ChatMessage> messages, {
     Future<void> Function(ChatMessage message)? onToolMessage,
     Future<void> Function(ChatToolCall call)? onToolStart,
+    Future<void> Function(ChatAttachment image, String? backendContext)? onGeneratedImage,
     ChatCancellationToken? cancellationToken,
   }) async* {
     final token = cancellationToken ?? ChatCancellationToken();
     await _backgroundService.start();
 
     try {
-      // Nemotron 3 Super is text-only. Analyze the newest attached image(s) with
-      // Gemini first, then replace the image payload with rich visual context.
-      final visionIndex = _latestUserAttachmentIndex(messages);
-      if (visionIndex != -1) {
+      // Every attached user image is understood by Gemini first. Nemotron only
+      // receives the resulting text context, because it is the text model.
+      final preparedMessages = <ChatMessage>[];
+      for (final message in messages) {
         token.throwIfCancelled();
-        final source = messages[visionIndex];
-        final analysis = await _visionService.analyzeImages(source.attachments);
-        token.throwIfCancelled();
-        messages[visionIndex] = source.copyWith(
-          content: _withVisionContext(source.content, analysis),
-          attachments: const [],
-        );
+        if (message.isUser && message.attachments.isNotEmpty) {
+          final analysis = await _visionService.analyzeImages(message.attachments);
+          token.throwIfCancelled();
+          preparedMessages.add(
+            message.copyWith(
+              content: _withVisionContext(message.content, analysis),
+              attachments: const [],
+            ),
+          );
+        } else {
+          preparedMessages.add(
+            message.copyWith(
+              // Generated images are for the UI/history, not multimodal input
+              // to Nemotron. Their hidden Gemini context is still preserved.
+              attachments: const [],
+            ),
+          );
+        }
       }
 
+      final wantsImage = _latestUserRequestsImage(messages);
       var rounds = 0;
       while (true) {
         token.throwIfCancelled();
@@ -68,8 +86,9 @@ class ChatGenerationService {
         }
 
         final events = <ChatStreamEvent>[];
+        final apiMessages = _messagesForNemotron(preparedMessages);
         await for (final event in _apiService.streamMessage(
-          List<ChatMessage>.of(messages),
+          apiMessages,
           tools: _toolRegistry.tools,
           cancellationToken: token,
         )) {
@@ -80,7 +99,19 @@ class ChatGenerationService {
 
         token.throwIfCancelled();
         final toolCalls = _completedToolCalls(events);
-        if (toolCalls.isEmpty) return;
+        if (toolCalls.isEmpty) {
+          if (wantsImage) {
+            final nemoText = _assistantText(events).trim();
+            if (nemoText.isNotEmpty) {
+              final generated = await _imageGenerationService.generateImage(nemoText);
+              token.throwIfCancelled();
+              if (onGeneratedImage != null) {
+                await onGeneratedImage(generated.image, generated.backendContext);
+              }
+            }
+          }
+          return;
+        }
 
         final assistantMessage = ChatMessage(
           id: '${DateTime.now().microsecondsSinceEpoch}_tool_assistant',
@@ -91,7 +122,7 @@ class ChatGenerationService {
           toolCalls: toolCalls,
           apiMetadata: _metadata(events),
         );
-        messages.add(assistantMessage);
+        preparedMessages.add(assistantMessage);
         if (onToolMessage != null) await onToolMessage(assistantMessage);
 
         for (final call in toolCalls) {
@@ -139,7 +170,7 @@ class ChatGenerationService {
             toolCallId: call.id,
             toolName: call.name,
           );
-          messages.add(toolMessage);
+          preparedMessages.add(toolMessage);
           if (onToolMessage != null) await onToolMessage(toolMessage);
         }
       }
@@ -148,11 +179,29 @@ class ChatGenerationService {
     }
   }
 
-  int _latestUserAttachmentIndex(List<ChatMessage> messages) {
+  List<ChatMessage> _messagesForNemotron(List<ChatMessage> messages) {
+    return messages.map((message) {
+      final hiddenContext = message.backendContext?.trim();
+      if (hiddenContext == null || hiddenContext.isEmpty) {
+        return message.copyWith(attachments: const []);
+      }
+      return message.copyWith(
+        content: '''${message.content}\n\n[BACKGROUND IMAGE CONTEXT — Gemini]\n$hiddenContext\n[END BACKGROUND IMAGE CONTEXT]''',
+        attachments: const [],
+      );
+    }).toList();
+  }
+
+  bool _latestUserRequestsImage(List<ChatMessage> messages) {
     for (var i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].isUser && messages[i].attachments.isNotEmpty) return i;
+      final message = messages[i];
+      if (!message.isUser) continue;
+      return RegExp(
+        r'\b(generate|create|draw|make|render|design|produce|paint|illustrate)\b[\s\S]{0,80}\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b|\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b[\s\S]{0,40}\b(generate|create|draw|make|render|design|produce)\b',
+        caseSensitive: false,
+      ).hasMatch(message.content);
     }
-    return -1;
+    return false;
   }
 
   String _withVisionContext(String userText, String analysis) {
