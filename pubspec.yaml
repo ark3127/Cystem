@@ -1,5 +1,5 @@
 name: cystem
-description: A personal AI chat app powered by NVIDIA Nemotron.
+description: A personal AI chat app powered by Moonshot AI Kimi K3 via NVIDIA NIM.
 publish_to: "none"
 
 version: 1.0.0+1
@@ -16,7 +16,7 @@ dependencies:
   # Secure API key storage
   flutter_secure_storage: ^10.3.1
 
-  # NVIDIA API requests
+  # NVIDIA NIM API requests
   http: ^1.6.0
 
   # Local chat storage
@@ -24,6 +24,9 @@ dependencies:
 
   # Markdown rendering
   flutter_markdown: ^0.7.7
+
+  # Camera/gallery image selection
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:
