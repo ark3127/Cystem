@@ -20,94 +20,76 @@ class AppTheme {
   static const double radiusLarge = 24;
   static const double radiusPill = 999;
 
-  static ThemeData get darkTheme {
-    final base = ThemeData.dark(useMaterial3: true);
-    final scheme = ColorScheme.fromSeed(
-      seedColor: primary,
-      brightness: Brightness.dark,
-      surface: background,
-    ).copyWith(
-      primary: primary,
-      onPrimary: const Color(0xFF17121F),
-      secondary: primarySoft,
-      onSecondary: const Color(0xFF17121F),
-      surface: background,
-      surfaceContainerLowest: background,
-      surfaceContainerLow: surface,
-      surfaceContainer: surfaceRaised,
-      surfaceContainerHigh: surfaceInteractive,
-      surfaceContainerHighest: const Color(0xFF2A2A2F),
-      outline: const Color(0xFF36363B),
-      outlineVariant: const Color(0xFF29292E),
-      onSurface: textPrimary,
-      onSurfaceVariant: textSecondary,
+  static ThemeData darkTheme({Color accent = primary}) => _buildTheme(Brightness.dark, accent);
+  static ThemeData lightTheme({Color accent = primary}) => _buildTheme(Brightness.light, accent);
+
+  static ThemeData _buildTheme(Brightness brightness, Color accent) {
+    final isDark = brightness == Brightness.dark;
+    final base = ThemeData(useMaterial3: true, brightness: brightness);
+    final bg = isDark ? background : const Color(0xFFF6F6F8);
+    final card = isDark ? surface : Colors.white;
+    final raised = isDark ? surfaceRaised : const Color(0xFFEDEDF1);
+    final interactive = isDark ? surfaceInteractive : const Color(0xFFE3E3E8);
+    final primaryText = isDark ? textPrimary : const Color(0xFF17171A);
+    final secondaryText = isDark ? textSecondary : const Color(0xFF5F6068);
+    final mutedText = isDark ? textMuted : const Color(0xFF777880);
+    final softAccent = Color.lerp(accent, Colors.white, isDark ? 0.28 : 0.1)!;
+
+    final scheme = ColorScheme.fromSeed(seedColor: accent, brightness: brightness, surface: bg).copyWith(
+      primary: accent,
+      onPrimary: isDark ? const Color(0xFF17121F) : Colors.white,
+      secondary: softAccent,
+      onSecondary: isDark ? const Color(0xFF17121F) : Colors.white,
+      surface: bg,
+      surfaceContainerLowest: bg,
+      surfaceContainerLow: card,
+      surfaceContainer: raised,
+      surfaceContainerHigh: interactive,
+      surfaceContainerHighest: isDark ? const Color(0xFF2A2A2F) : const Color(0xFFD9D9DF),
+      outline: isDark ? const Color(0xFF36363B) : const Color(0xFFD0D0D6),
+      outlineVariant: isDark ? const Color(0xFF29292E) : const Color(0xFFE1E1E5),
+      onSurface: primaryText,
+      onSurfaceVariant: secondaryText,
     );
 
     return base.copyWith(
       colorScheme: scheme,
-      scaffoldBackgroundColor: background,
-      canvasColor: background,
-      dividerTheme: const DividerThemeData(color: Color(0xFF252529), thickness: 1, space: 1),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: background,
-        foregroundColor: textPrimary,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        centerTitle: false,
-        surfaceTintColor: Colors.transparent,
-      ),
+      scaffoldBackgroundColor: bg,
+      canvasColor: bg,
+      dividerTheme: DividerThemeData(color: isDark ? const Color(0xFF252529) : const Color(0xFFE4E4E8), thickness: 1, space: 1),
+      appBarTheme: AppBarTheme(backgroundColor: bg, foregroundColor: primaryText, elevation: 0, scrolledUnderElevation: 0, centerTitle: false, surfaceTintColor: Colors.transparent),
       textTheme: base.textTheme.copyWith(
-        displayLarge: const TextStyle(color: textPrimary, fontWeight: FontWeight.w700, letterSpacing: -1.2),
-        displayMedium: const TextStyle(color: textPrimary, fontWeight: FontWeight.w700, letterSpacing: -0.8),
-        headlineLarge: const TextStyle(color: textPrimary, fontWeight: FontWeight.w700, letterSpacing: -0.6),
-        headlineMedium: const TextStyle(color: textPrimary, fontWeight: FontWeight.w700, letterSpacing: -0.4),
-        headlineSmall: const TextStyle(color: textPrimary, fontWeight: FontWeight.w700),
-        titleLarge: const TextStyle(color: textPrimary, fontWeight: FontWeight.w600),
-        titleMedium: const TextStyle(color: textPrimary, fontWeight: FontWeight.w600),
-        titleSmall: const TextStyle(color: textPrimary, fontWeight: FontWeight.w600),
-        bodyLarge: const TextStyle(color: textPrimary, height: 1.45),
-        bodyMedium: const TextStyle(color: textSecondary, height: 1.45),
-        bodySmall: const TextStyle(color: textSecondary, height: 1.4),
-        labelLarge: const TextStyle(color: textPrimary, fontWeight: FontWeight.w600),
-        labelMedium: const TextStyle(color: textSecondary, fontWeight: FontWeight.w500),
-        labelSmall: const TextStyle(color: textMuted, fontWeight: FontWeight.w500),
+        displayLarge: TextStyle(color: primaryText, fontWeight: FontWeight.w700, letterSpacing: -1.2),
+        displayMedium: TextStyle(color: primaryText, fontWeight: FontWeight.w700, letterSpacing: -0.8),
+        headlineLarge: TextStyle(color: primaryText, fontWeight: FontWeight.w700, letterSpacing: -0.6),
+        headlineMedium: TextStyle(color: primaryText, fontWeight: FontWeight.w700, letterSpacing: -0.4),
+        headlineSmall: TextStyle(color: primaryText, fontWeight: FontWeight.w700),
+        titleLarge: TextStyle(color: primaryText, fontWeight: FontWeight.w600),
+        titleMedium: TextStyle(color: primaryText, fontWeight: FontWeight.w600),
+        titleSmall: TextStyle(color: primaryText, fontWeight: FontWeight.w600),
+        bodyLarge: TextStyle(color: primaryText, height: 1.45),
+        bodyMedium: TextStyle(color: secondaryText, height: 1.45),
+        bodySmall: TextStyle(color: secondaryText, height: 1.4),
+        labelLarge: TextStyle(color: primaryText, fontWeight: FontWeight.w600),
+        labelMedium: TextStyle(color: secondaryText, fontWeight: FontWeight.w500),
+        labelSmall: TextStyle(color: mutedText, fontWeight: FontWeight.w500),
       ),
-      iconTheme: const IconThemeData(color: textSecondary),
+      iconTheme: IconThemeData(color: secondaryText),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: surfaceRaised,
-        hintStyle: const TextStyle(color: textMuted),
-        labelStyle: const TextStyle(color: textSecondary),
+        fillColor: raised,
+        hintStyle: TextStyle(color: mutedText),
+        labelStyle: TextStyle(color: secondaryText),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(radiusMedium), borderSide: BorderSide.none),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(radiusMedium), borderSide: BorderSide.none),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(radiusMedium), borderSide: const BorderSide(color: primary, width: 1.2)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(radiusMedium), borderSide: BorderSide(color: accent, width: 1.2)),
       ),
-      cardTheme: CardThemeData(
-        color: surface,
-        elevation: 0,
-        margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusMedium)),
-      ),
-      snackBarTheme: SnackBarThemeData(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: surfaceInteractive,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusMedium)),
-      ),
-      popupMenuTheme: PopupMenuThemeData(
-        color: surfaceRaised,
-        elevation: 8,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusMedium)),
-      ),
-      bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: surface,
-        surfaceTintColor: Colors.transparent,
-        showDragHandle: true,
-      ),
-      navigationDrawerTheme: NavigationDrawerThemeData(
-        backgroundColor: surface,
-        indicatorColor: primary.withValues(alpha: 0.14),
-      ),
+      cardTheme: CardThemeData(color: card, elevation: 0, margin: EdgeInsets.zero, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusMedium))),
+      snackBarTheme: SnackBarThemeData(behavior: SnackBarBehavior.floating, backgroundColor: interactive, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusMedium))),
+      popupMenuTheme: PopupMenuThemeData(color: raised, elevation: 8, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusMedium))),
+      bottomSheetTheme: BottomSheetThemeData(backgroundColor: card, surfaceTintColor: Colors.transparent, showDragHandle: true),
+      navigationDrawerTheme: NavigationDrawerThemeData(backgroundColor: card, indicatorColor: accent.withValues(alpha: 0.14)),
     );
   }
 }
