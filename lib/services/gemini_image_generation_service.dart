@@ -5,15 +5,13 @@ import 'package:http/http.dart' as http;
 import '../models/chat_attachment.dart';
 import 'secure_storage_service.dart';
 
-/// Generates images from Nemotron's text description using Gemini's native
-/// image model. The returned text is kept as hidden backend context.
+/// Generates or edits images using Gemini's native image model. Returned text
+/// is backend context; the image itself is surfaced by Cystem's chat UI.
 class GeminiImageGenerationService {
-  GeminiImageGenerationService({http.Client Function()? clientFactory})
-      : _clientFactory = clientFactory ?? http.Client.new;
+  GeminiImageGenerationService({http.Client Function()? clientFactory}) : _clientFactory = clientFactory ?? http.Client.new;
 
   static const _model = 'gemini-3.1-flash-image';
-  static const _endpoint =
-      'https://generativelanguage.googleapis.com/v1/models/$_model:generateContent';
+  static const _endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 
   final http.Client Function() _clientFactory;
   final SecureStorageService _storage = SecureStorageService();
@@ -23,12 +21,36 @@ class GeminiImageGenerationService {
     if (cleanPrompt.isEmpty) {
       throw const GeminiImageGenerationException('Nemotron did not provide an image description.');
     }
+    return _run(input: [
+      {
+        'type': 'text',
+        'text': '''Create the requested image based directly on the following detailed description from Cystem's main AI model, Nemotron. Generate the image itself. Preserve the intended subject, composition, style, text, and important details. Do not merely describe how to make it.\n\n$cleanPrompt''',
+      },
+    ]);
+  }
 
+  Future<GeminiImageGenerationResult> editImage({required ChatAttachment source, required String instruction}) async {
+    final cleanInstruction = instruction.trim();
+    if (cleanInstruction.isEmpty) {
+      throw const GeminiImageGenerationException('Please describe how you want to edit the image.');
+    }
+    return _run(input: [
+      {
+        'type': 'text',
+        'text': '''Edit the supplied image according to this instruction. Keep everything else unchanged unless the instruction requires it. Return the edited image, not a textual description.\n\n$cleanInstruction''',
+      },
+      {
+        'type': 'image',
+        'data': source.data,
+        'mime_type': source.mimeType,
+      },
+    ]);
+  }
+
+  Future<GeminiImageGenerationResult> _run({required List<Map<String, dynamic>> input}) async {
     final apiKey = await _storage.getGeminiApiKey();
     if (apiKey == null || apiKey.trim().isEmpty) {
-      throw const GeminiImageGenerationException(
-        'Gemini image generation is not configured. Add a Gemini API key in Settings → Vision.',
-      );
+      throw const GeminiImageGenerationException('Gemini image generation is not configured. Add a Gemini API key in Settings → Vision.');
     }
 
     final client = _clientFactory();
@@ -41,79 +63,64 @@ class GeminiImageGenerationService {
               'x-goog-api-key': apiKey.trim(),
             },
             body: jsonEncode({
-              'contents': [
-                {
-                  'parts': [
-                    {
-                      'text': '''Create the requested image based directly on the following description from Cystem's main AI model, Nemotron. Preserve the intended subject, composition, style, text, and important details. Generate the image itself; do not merely describe how to make it.\n\n$cleanPrompt''',
-                    },
-                  ],
-                },
-              ],
-              'generationConfig': {
-                'responseModalities': ['TEXT', 'IMAGE'],
+              'model': _model,
+              'input': input,
+              'response_format': {
+                'type': 'image',
+                'delivery': 'inline',
+                'image_size': '1K',
               },
+              'store': false,
             }),
           )
           .timeout(const Duration(minutes: 3));
 
       if (response.statusCode != 200) {
-        throw GeminiImageGenerationException(
-          'Gemini image generation failed with HTTP ${response.statusCode}. ${_errorMessage(response.body)}',
-        );
+        throw GeminiImageGenerationException('Gemini image generation failed with HTTP ${response.statusCode}. ${_errorMessage(response.body)}');
       }
 
       final decoded = jsonDecode(response.body);
-      final candidates = decoded is Map ? decoded['candidates'] : null;
-      if (candidates is! List || candidates.isEmpty) {
-        throw const GeminiImageGenerationException('Gemini returned no image generation result.');
-      }
-
-      final content = candidates.first is Map ? candidates.first['content'] : null;
-      final parts = content is Map ? content['parts'] : null;
-      if (parts is! List) {
-        throw const GeminiImageGenerationException('Gemini returned an empty image generation result.');
-      }
+      if (decoded is! Map) throw const GeminiImageGenerationException('Gemini returned an invalid image response.');
 
       String? text;
-      ChatAttachment? image;
-      for (final rawPart in parts.whereType<Map>()) {
-        // Gemini 3 image models can emit interim images while thinking. Only
-        // use the final non-thought image in the visible CYSTEM response.
-        if (rawPart['thought'] == true) continue;
-
-        final partText = rawPart['text'];
-        if (partText is String && partText.trim().isNotEmpty) {
-          text = text == null ? partText.trim() : '$text\n${partText.trim()}';
-        }
-
-        final inlineData = rawPart['inlineData'] ?? rawPart['inline_data'];
-        if (inlineData is Map) {
-          final data = inlineData['data'];
-          final mimeType = inlineData['mimeType'] ?? inlineData['mime_type'];
-          if (data is String && data.isNotEmpty && mimeType is String && mimeType.isNotEmpty) {
-            image = ChatAttachment(
-              id: '${DateTime.now().microsecondsSinceEpoch}_gemini_image',
-              type: ChatAttachmentType.image,
-              mimeType: mimeType,
-              data: data,
-              fileName: 'cystem-gemini-generated.png',
-            );
+      ChatAttachment? image = _attachmentFromImageContent(decoded['output_image']);
+      final steps = decoded['steps'];
+      if (steps is List) {
+        for (final rawStep in steps.whereType<Map>()) {
+          if (rawStep['type'] != 'model_output') continue;
+          final content = rawStep['content'];
+          if (content is! List) continue;
+          for (final rawPart in content.whereType<Map>()) {
+            if (rawPart['type'] == 'text' && rawPart['text'] is String) {
+              final value = (rawPart['text'] as String).trim();
+              if (value.isNotEmpty) text = text == null ? value : '$text\n$value';
+            } else if (rawPart['type'] == 'image' && image == null) {
+              image = _attachmentFromImageContent(rawPart);
+            }
           }
         }
       }
 
-      if (image == null) {
-        throw const GeminiImageGenerationException('Gemini did not return a generated image.');
-      }
-
-      return GeminiImageGenerationResult(
-        image: image,
-        backendContext: text?.trim(),
-      );
+      if (image == null) throw const GeminiImageGenerationException('Gemini did not return a generated image.');
+      return GeminiImageGenerationResult(image: image, backendContext: text?.trim());
     } finally {
       client.close();
     }
+  }
+
+  ChatAttachment? _attachmentFromImageContent(dynamic content) {
+    if (content is! Map) return null;
+    final data = content['data'];
+    final mimeType = content['mime_type'] ?? content['mimeType'];
+    if (data is! String || data.isEmpty || mimeType is! String || mimeType.isEmpty) return null;
+    final extension = mimeType.split('/').last.split(';').first;
+    return ChatAttachment(
+      id: '${DateTime.now().microsecondsSinceEpoch}_gemini_image',
+      type: ChatAttachmentType.image,
+      mimeType: mimeType,
+      data: data,
+      fileName: 'cystem-gemini-generated.$extension',
+    );
   }
 
   String _errorMessage(String body) {
@@ -131,7 +138,6 @@ class GeminiImageGenerationService {
 
 class GeminiImageGenerationResult {
   const GeminiImageGenerationResult({required this.image, this.backendContext});
-
   final ChatAttachment image;
   final String? backendContext;
 }
@@ -139,7 +145,6 @@ class GeminiImageGenerationResult {
 class GeminiImageGenerationException implements Exception {
   const GeminiImageGenerationException(this.message);
   final String message;
-
   @override
   String toString() => message;
 }
