@@ -26,15 +26,12 @@ class MessageActions extends StatelessWidget {
           case _MessageAction.copy:
             onCopy?.call();
             break;
-
           case _MessageAction.edit:
             onEdit?.call();
             break;
-
           case _MessageAction.regenerate:
             onRegenerate?.call();
             break;
-
           case _MessageAction.delete:
             onDelete();
             break;
@@ -69,7 +66,7 @@ class MessageActions extends StatelessWidget {
                 leading: Icon(Icons.refresh),
                 title: Text('Regenerate'),
               ),
-            );
+            ),
           );
         }
 
