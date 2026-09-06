@@ -101,6 +101,8 @@ class NvidiaApiService {
           }
 
           String buffer = '';
+          final streamedToolCalls = <int, _ToolCallAccumulator>{};
+
           await for (final chunk in response.stream.transform(utf8.decoder)) {
             buffer += chunk;
             final lines = buffer.split('\n');
@@ -133,7 +135,6 @@ class NvidiaApiService {
                 String? text;
                 String? reasoning;
                 String? finishReason;
-                final toolCalls = <ChatToolCall>[];
 
                 if (choices is List &&
                     choices.isNotEmpty &&
@@ -154,26 +155,52 @@ class NvidiaApiService {
 
                     final rawToolCalls = delta['tool_calls'];
                     if (rawToolCalls is List) {
-                      for (final rawCall in rawToolCalls) {
+                      for (var position = 0;
+                          position < rawToolCalls.length;
+                          position++) {
+                        final rawCall = rawToolCalls[position];
                         if (rawCall is! Map) continue;
-                        final function = rawCall['function'];
-                        if (function is! Map) continue;
+
+                        final rawIndex = rawCall['index'];
+                        final index = rawIndex is num
+                            ? rawIndex.toInt()
+                            : position;
+                        final accumulator = streamedToolCalls.putIfAbsent(
+                          index,
+                          _ToolCallAccumulator.new,
+                        );
 
                         final id = rawCall['id'];
-                        final name = function['name'];
-                        final arguments = function['arguments'];
-                        if (id is String && name is String) {
-                          toolCalls.add(ChatToolCall(
-                            id: id,
-                            name: name,
-                            arguments:
-                                arguments is String ? arguments : '{}',
-                          ));
+                        if (id is String && id.isNotEmpty) {
+                          accumulator.id = id;
+                        }
+
+                        final function = rawCall['function'];
+                        if (function is Map) {
+                          final name = function['name'];
+                          if (name is String && name.isNotEmpty) {
+                            accumulator.name = name;
+                          }
+                          final arguments = function['arguments'];
+                          if (arguments is String) {
+                            accumulator.arguments += arguments;
+                          }
                         }
                       }
                     }
                   }
                 }
+
+                final toolCalls = streamedToolCalls.values
+                    .where((call) => call.id != null && call.name != null)
+                    .map((call) => ChatToolCall(
+                          id: call.id!,
+                          name: call.name!,
+                          arguments: call.arguments.isEmpty
+                              ? '{}'
+                              : call.arguments,
+                        ))
+                    .toList();
 
                 int? promptTokens;
                 int? completionTokens;
@@ -276,4 +303,10 @@ class NvidiaApiService {
 
     return NvidiaApiException(message, statusCode: statusCode);
   }
+}
+
+class _ToolCallAccumulator {
+  String? id;
+  String? name;
+  String arguments = '';
 }
