@@ -28,6 +28,9 @@ dependencies:
   # Camera/gallery image selection
   image_picker: ^1.1.2
 
+  # Android phone/browser/SMS intents
+  url_launcher: ^6.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
