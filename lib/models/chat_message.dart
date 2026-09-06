@@ -93,8 +93,7 @@ class ChatMessage {
       content: content ?? this.content,
       role: role,
       createdAt: createdAt,
-      // Nemotron's chain-of-thought is backend-only. Do not persist or render it.
-      reasoningContent: null,
+      reasoningContent: reasoningContent ?? this.reasoningContent,
       toolCalls: toolCalls ?? this.toolCalls,
       toolCallId: toolCallId ?? this.toolCallId,
       toolName: toolName ?? this.toolName,
@@ -110,6 +109,7 @@ class ChatMessage {
       'content': content,
       'role': role.name,
       'createdAt': createdAt.toIso8601String(),
+      if (reasoningContent != null) 'reasoningContent': reasoningContent,
       if (toolCalls.isNotEmpty)
         'toolCalls': toolCalls.map((call) => call.toJson()).toList(),
       if (toolCallId != null) 'toolCallId': toolCallId,
@@ -131,8 +131,7 @@ class ChatMessage {
       content: json['content'] as String? ?? '',
       role: MessageRole.values.byName(json['role'] as String),
       createdAt: DateTime.parse(json['createdAt'] as String),
-      // Old conversations may contain reasoningContent; intentionally ignore it.
-      reasoningContent: null,
+      reasoningContent: json['reasoningContent'] as String?,
       toolCalls: rawToolCalls
           .map((call) => ChatToolCall.fromJson(
                 Map<String, dynamic>.from(call as Map),
