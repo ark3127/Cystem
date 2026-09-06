@@ -11,7 +11,7 @@ class MessageActions extends StatelessWidget {
   });
 
   final bool isUser;
-  final VoidCallback onCopy;
+  final VoidCallback? onCopy;
   final VoidCallback? onEdit;
   final VoidCallback? onRegenerate;
   final VoidCallback onDelete;
@@ -24,7 +24,7 @@ class MessageActions extends StatelessWidget {
       onSelected: (_MessageAction action) {
         switch (action) {
           case _MessageAction.copy:
-            onCopy();
+            onCopy?.call();
             break;
 
           case _MessageAction.edit:
@@ -69,7 +69,7 @@ class MessageActions extends StatelessWidget {
                 leading: Icon(Icons.refresh),
                 title: Text('Regenerate'),
               ),
-            ),
+            );
           );
         }
 
