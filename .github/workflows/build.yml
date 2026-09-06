@@ -27,11 +27,21 @@ jobs:
       - name: Generate Android project
         run: flutter create --platforms=android .
 
-      - name: Configure Android networking and background execution
+      - name: Configure Android networking, background execution, and SDK
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
+
+          android_app = Path('android/app/build.gradle.kts')
+          app_gradle = android_app.read_text()
+          app_gradle = re.sub(
+              r'compileSdk\s*=\s*[^\n]+',
+              'compileSdk = 36',
+              app_gradle,
+              count=1,
+          )
+          android_app.write_text(app_gradle)
 
           manifest_path = Path('android/app/src/main/AndroidManifest.xml')
           manifest = manifest_path.read_text()
@@ -71,6 +81,32 @@ jobs:
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Align Flutter plugin Android SDKs
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          pub_cache = Path.home() / '.pub-cache' / 'hosted' / 'pub.dev'
+          patterns = (
+              re.compile(r'(compileSdkVersion\s+)\d+'),
+              re.compile(r'(compileSdk\s*=\s*)\d+'),
+          )
+          changed = []
+          for gradle_file in pub_cache.glob('*/android/build.gradle*'):
+              text = gradle_file.read_text()
+              updated = text
+              for pattern in patterns:
+                  updated = pattern.sub(r'\g<1>36', updated)
+              if updated != text:
+                  gradle_file.write_text(updated)
+                  changed.append(str(gradle_file))
+
+          print('Updated Android compileSdk to 36 in:')
+          for path in changed:
+              print(f'  - {path}')
+          PY
 
       - name: Analyze
         run: flutter analyze
