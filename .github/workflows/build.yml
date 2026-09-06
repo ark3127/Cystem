@@ -29,17 +29,35 @@ jobs:
 
       - name: Configure Android networking and background execution
         run: |
-          sed -i '/<manifest/a\
-          <uses-permission android:name="android.permission.INTERNET"/>\
-          <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\
-          <uses-permission android:name="android.permission.WAKE_LOCK"/>\
-          <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\
-          <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>\
-          <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>' \
-          android/app/src/main/AndroidManifest.xml
-          sed -i '/<application/a\
-          <service android:name="de.julianassmann.flutter_background.IsolateHolderService" android:exported="false" android:foregroundServiceType="dataSync" />' \
-          android/app/src/main/AndroidManifest.xml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest_path = Path('android/app/src/main/AndroidManifest.xml')
+          manifest = manifest_path.read_text()
+
+          permissions = [
+              'android.permission.INTERNET',
+              'android.permission.POST_NOTIFICATIONS',
+              'android.permission.WAKE_LOCK',
+              'android.permission.FOREGROUND_SERVICE',
+              'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
+              'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+          ]
+          permission_block = '\n'.join(
+              f'    <uses-permission android:name="{permission}" />'
+              for permission in permissions
+              if f'android:name="{permission}"' not in manifest
+          )
+          if permission_block:
+              manifest = re.sub(r'(?m)^\s*<application\\b', f'{permission_block}\n\n<application', manifest, count=1)
+
+          service = '    <service android:name="de.julianassmann.flutter_background.IsolateHolderService" android:exported="false" android:foregroundServiceType="dataSync" />'
+          if 'de.julianassmann.flutter_background.IsolateHolderService' not in manifest:
+              manifest = re.sub(r'(<application\\b[^>]*>)', r'\1\n' + service, manifest, count=1)
+
+          manifest_path.write_text(manifest)
+          PY
 
       - name: Get dependencies
         run: flutter pub get
