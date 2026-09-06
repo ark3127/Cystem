@@ -13,6 +13,150 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Polish chat message UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/screens/chat_screen.dart')
+          text = path.read_text()
+
+          text = text.replace(
+              'scheme.primary.withValues(alpha: 0.16)',
+              'scheme.primary.withValues(alpha: 0.10)',
+          )
+
+          old = '''  Widget _buildImages(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: message.attachments.map((attachment) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Stack(
+              alignment: Alignment.bottomCenter,
+              children: [
+                GestureDetector(
+                  onTap: () => onViewImage(attachment),
+                  child: Image.memory(
+                    decodeAttachmentImage(attachment),
+                    height: 320,
+                    width: double.infinity,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                      height: 100,
+                      child: Icon(Icons.broken_image_outlined),
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'View',
+                        onPressed: () => onViewImage(attachment),
+                        icon: const Icon(
+                          Icons.fullscreen_rounded,
+                          color: Colors.white,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Download',
+                        onPressed: () => onDownloadImage(attachment),
+                        icon: const Icon(
+                          Icons.download_rounded,
+                          color: Colors.white,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Edit with Gemini',
+                        onPressed: () => onEditImage(attachment),
+                        icon: const Icon(
+                          Icons.edit_rounded,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }'''
+
+          new = '''  Widget _buildImages(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: message.attachments.map((attachment) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: () => onViewImage(attachment),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image.memory(
+                    decodeAttachmentImage(attachment),
+                    height: 280,
+                    width: double.infinity,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                      height: 100,
+                      child: Icon(Icons.broken_image_outlined),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'View',
+                    onPressed: () => onViewImage(attachment),
+                    icon: const Icon(Icons.fullscreen_rounded, size: 20),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Download',
+                    onPressed: () => onDownloadImage(attachment),
+                    icon: const Icon(Icons.download_rounded, size: 20),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Edit with Gemini',
+                    onPressed: () => onEditImage(attachment),
+                    icon: const Icon(Icons.edit_rounded, size: 20),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }'''
+
+          if old not in text:
+              raise SystemExit('Expected image UI block was not found; refusing to build a partial patch.')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          print('Applied compact image/message UI.')
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
