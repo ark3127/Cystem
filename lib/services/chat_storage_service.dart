@@ -6,20 +6,15 @@ import 'package:path_provider/path_provider.dart';
 import '../models/chat_conversation.dart';
 
 class ChatStorageService {
-  static const String _fileName =
-      'cystem_conversations.json';
+  static const String _fileName = 'cystem_conversations.json';
+  static const int _storageVersion = 2;
 
   Future<File> _getStorageFile() async {
-    final directory =
-        await getApplicationDocumentsDirectory();
-
-    return File(
-      '${directory.path}/$_fileName',
-    );
+    final directory = await getApplicationDocumentsDirectory();
+    return File('${directory.path}/$_fileName');
   }
 
-  Future<List<ChatConversation>>
-      loadConversations() async {
+  Future<List<ChatConversation>> loadConversations() async {
     try {
       final file = await _getStorageFile();
 
@@ -28,30 +23,43 @@ class ChatStorageService {
       }
 
       final contents = await file.readAsString();
-
       if (contents.trim().isEmpty) {
         return [];
       }
 
       final data = jsonDecode(contents);
 
-      if (data is! List) {
-        return [];
+      // Version 1 stored the conversations as a bare JSON array.
+      // Version 2 uses an envelope so future migrations can be added safely.
+      if (data is List) {
+        return _decodeConversations(data);
       }
 
-      return data
-          .map(
-            (conversation) =>
-                ChatConversation.fromJson(
-              Map<String, dynamic>.from(
-                conversation as Map,
-              ),
-            ),
-          )
-          .toList();
+      if (data is Map<String, dynamic>) {
+        final version = data['version'];
+        final rawConversations = data['conversations'];
+
+        if (version is int && version <= _storageVersion &&
+            rawConversations is List) {
+          return _decodeConversations(rawConversations);
+        }
+      }
+
+      return [];
     } catch (_) {
       return [];
     }
+  }
+
+  List<ChatConversation> _decodeConversations(List<dynamic> data) {
+    return data
+        .whereType<Map>()
+        .map(
+          (conversation) => ChatConversation.fromJson(
+            Map<String, dynamic>.from(conversation),
+          ),
+        )
+        .toList();
   }
 
   Future<void> saveConversations(
@@ -59,12 +67,12 @@ class ChatStorageService {
   ) async {
     final file = await _getStorageFile();
 
-    final data = conversations
-        .map(
-          (conversation) =>
-              conversation.toJson(),
-        )
-        .toList();
+    final data = {
+      'version': _storageVersion,
+      'conversations': conversations
+          .map((conversation) => conversation.toJson())
+          .toList(),
+    };
 
     await file.writeAsString(
       jsonEncode(data),
