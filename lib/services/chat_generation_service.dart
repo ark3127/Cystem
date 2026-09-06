@@ -31,6 +31,7 @@ class ChatGenerationService {
   Stream<ChatStreamEvent> generate(
     List<ChatMessage> messages, {
     Future<void> Function(ChatMessage message)? onToolMessage,
+    Future<void> Function(ChatToolCall call)? onToolStart,
     ChatCancellationToken? cancellationToken,
   }) async* {
     final token = cancellationToken ?? ChatCancellationToken();
@@ -81,6 +82,7 @@ class ChatGenerationService {
           throw NvidiaApiException('Invalid JSON arguments for ${call.name}: $error');
         }
 
+        if (onToolStart != null) await onToolStart(call);
         final result = await _toolExecutor.execute(call);
         token.throwIfCancelled();
         final toolMessage = ChatMessage(
