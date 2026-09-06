@@ -6,11 +6,13 @@ import '../models/chat_attachment.dart';
 import 'secure_storage_service.dart';
 
 /// Uses Gemini as Cystem's vision layer. Nemotron remains the main text model.
+/// The Interactions API is used because it is now Google's recommended API for
+/// new multimodal applications.
 class GeminiVisionService {
   GeminiVisionService({http.Client Function()? clientFactory}) : _clientFactory = clientFactory ?? http.Client.new;
 
-  static const _model = 'gemini-2.5-flash';
-  static const _endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent';
+  static const _model = 'gemini-3.6-flash';
+  static const _endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 
   final http.Client Function() _clientFactory;
   final SecureStorageService _storage = SecureStorageService();
@@ -23,18 +25,18 @@ class GeminiVisionService {
       throw const GeminiVisionException('Gemini vision is not configured. Add a Gemini API key in Settings → Vision.');
     }
 
-    final parts = <Map<String, dynamic>>[
+    final input = <Map<String, dynamic>>[
       {
-        'text': '''Analyze the attached image(s) extremely thoroughly for another AI model that cannot see images. Your output will be passed verbatim as visual context to NVIDIA Nemotron.
+        'type': 'text',
+        'text': '''You are Cystem's private image-understanding layer. Another AI model, NVIDIA Nemotron, cannot see the user's image. Analyze the attached image(s) extremely thoroughly and return only visual context for Nemotron.
 
-Describe everything that could matter: scene and objects, people, actions, spatial relationships, UI elements, charts/diagrams, colors and visual states, visible text, error messages, and any other relevant details. Transcribe readable text and code as accurately as possible. If there is code, preserve it in a fenced code block. Separate observations from uncertainty. Do not answer the user's question; only produce a detailed visual analysis. Do not omit details merely because they seem minor.''',
+Include everything that could matter: scene and objects, people, actions, spatial relationships, UI elements, charts/diagrams, colors and visual states, visible text, error messages, and any other relevant details. Transcribe readable text and code as accurately as possible. If there is code, preserve it in a fenced code block. Clearly distinguish observations from uncertainty. Do not answer the user's question and do not invent details. Your output stays in the backend and is never shown as a separate chat message.''',
       },
       ...attachments.map(
         (attachment) => {
-          'inline_data': {
-            'mime_type': attachment.mimeType,
-            'data': attachment.data,
-          },
+          'type': 'image',
+          'data': attachment.data,
+          'mime_type': attachment.mimeType,
         },
       ),
     ];
@@ -49,13 +51,13 @@ Describe everything that could matter: scene and objects, people, actions, spati
               'x-goog-api-key': apiKey.trim(),
             },
             body: jsonEncode({
-              'contents': [
-                {'parts': parts},
-              ],
-              'generationConfig': {
-                'temperature': 0.2,
-                'maxOutputTokens': 8192,
+              'model': _model,
+              'input': input,
+              'response_format': {
+                'type': 'text',
+                'mime_type': 'text/plain',
               },
+              'store': false,
             }),
           )
           .timeout(const Duration(seconds: 90));
@@ -65,22 +67,7 @@ Describe everything that could matter: scene and objects, people, actions, spati
       }
 
       final decoded = jsonDecode(response.body);
-      final candidates = decoded is Map ? decoded['candidates'] : null;
-      if (candidates is! List || candidates.isEmpty) {
-        throw const GeminiVisionException('Gemini returned no visual analysis.');
-      }
-
-      final content = candidates.first is Map ? candidates.first['content'] : null;
-      final responseParts = content is Map ? content['parts'] : null;
-      if (responseParts is! List) {
-        throw const GeminiVisionException('Gemini returned an empty visual analysis.');
-      }
-
-      final text = responseParts
-          .whereType<Map>()
-          .map((part) => part['text'])
-          .whereType<String>()
-          .join();
+      final text = _extractText(decoded);
       if (text.trim().isEmpty) {
         throw const GeminiVisionException('Gemini returned an empty visual analysis.');
       }
@@ -88,6 +75,24 @@ Describe everything that could matter: scene and objects, people, actions, spati
     } finally {
       client.close();
     }
+  }
+
+  String _extractText(dynamic decoded) {
+    if (decoded is! Map) return '';
+    final outputText = decoded['output_text'];
+    if (outputText is String && outputText.trim().isNotEmpty) return outputText;
+
+    final steps = decoded['steps'];
+    if (steps is! List) return '';
+    return steps
+        .whereType<Map>()
+        .where((step) => step['type'] == 'model_output')
+        .expand((step) => step['content'] is List ? (step['content'] as List) : const [])
+        .whereType<Map>()
+        .where((part) => part['type'] == 'text')
+        .map((part) => part['text'])
+        .whereType<String>()
+        .join('\n');
   }
 
   String _errorMessage(String body) {
