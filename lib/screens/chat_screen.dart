@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/chat_attachment.dart';
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
+import '../models/chat_stream_event.dart';
 import '../services/chat_storage_service.dart';
 import '../services/image_attachment_service.dart';
 import '../services/nvidia_api_service.dart';
@@ -24,18 +25,17 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final TextEditingController _messageController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  final NvidiaApiService _apiService = NvidiaApiService();
-  final ChatStorageService _storageService = ChatStorageService();
-  final ImageAttachmentService _imageService = ImageAttachmentService();
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final _messageController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _apiService = NvidiaApiService();
+  final _storageService = ChatStorageService();
+  final _imageService = ImageAttachmentService();
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  StreamSubscription<String>? _generationSubscription;
+  StreamSubscription<ChatStreamEvent>? _generationSubscription;
   List<ChatConversation> _conversations = [];
   ChatConversation? _conversation;
   List<ChatAttachment> _pendingAttachments = [];
-
   bool _isGenerating = false;
   bool _isLoading = true;
 
@@ -57,10 +57,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _sortConversations(conversations);
 
     if (conversations.isEmpty) {
-      final newConversation = _createConversation();
-      conversations.add(newConversation);
+      final conversation = _createConversation();
+      conversations.add(conversation);
+      _conversation = conversation;
       await _storageService.saveConversations(conversations);
-      _conversation = newConversation;
     } else {
       _conversation = conversations.first;
     }
@@ -97,20 +97,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _createNewChat() async {
     if (_isGenerating) return;
-    final newConversation = _createConversation();
-
+    final conversation = _createConversation();
     setState(() {
-      _conversations.add(newConversation);
-      _conversation = newConversation;
+      _conversations.add(conversation);
+      _conversation = conversation;
       _pendingAttachments = [];
       _sortConversations(_conversations);
     });
-
     await _saveAllConversations();
-
-    if (mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
+    if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
 
   Future<void> _selectConversation(ChatConversation conversation) async {
@@ -119,7 +114,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _conversation = conversation;
       _pendingAttachments = [];
     });
-
     if (Navigator.of(context).canPop()) Navigator.of(context).pop();
     _scrollToBottom();
   }
@@ -137,7 +131,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _renameConversation(ChatConversation conversation) async {
     if (_isGenerating) return;
     final controller = TextEditingController(text: conversation.title);
-
     final newTitle = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -149,18 +142,13 @@ class _ChatScreenState extends State<ChatScreen> {
           decoration: const InputDecoration(hintText: 'Enter chat name...'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Save'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
         ],
       ),
     );
-
     controller.dispose();
     if (newTitle == null || newTitle.isEmpty || !mounted) return;
-
     setState(() {
       conversation.title = newTitle;
       conversation.updatedAt = DateTime.now();
@@ -171,19 +159,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _deleteConversation(ChatConversation conversation) async {
     if (_isGenerating) return;
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete chat?'),
         content: Text('Delete "${conversation.title}"? This cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
 
     setState(() {
@@ -200,14 +186,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _pendingAttachments = [];
     });
-
     await _saveAllConversations();
     _scrollToBottom();
   }
 
   Future<void> _pickImage() async {
     if (_isGenerating) return;
-
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
       builder: (context) => SafeArea(
@@ -217,28 +201,24 @@ class _ChatScreenState extends State<ChatScreen> {
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
               title: const Text('Choose from gallery'),
-              onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
             ListTile(
               leading: const Icon(Icons.camera_alt_outlined),
               title: const Text('Take a photo'),
-              onTap: () => Navigator.of(context).pop(ImageSource.camera),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
             ),
             const SizedBox(height: 8),
           ],
         ),
       ),
     );
-
     if (source == null || !mounted) return;
 
     try {
       final attachment = await _imageService.pickImage(source);
       if (attachment == null || !mounted) return;
-
-      setState(() {
-        _pendingAttachments = [..._pendingAttachments, attachment];
-      });
+      setState(() => _pendingAttachments = [..._pendingAttachments, attachment]);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -255,18 +235,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
-    if ((text.isEmpty && _pendingAttachments.isEmpty) || _isGenerating || _conversation == null) {
-      return;
-    }
-    await _sendUserText(text, attachments: List<ChatAttachment>.from(_pendingAttachments));
+    if ((text.isEmpty && _pendingAttachments.isEmpty) || _isGenerating || _conversation == null) return;
+    await _sendUserText(text, attachments: List.of(_pendingAttachments));
   }
 
-  Future<void> _sendUserText(
-    String text, {
-    List<ChatAttachment> attachments = const [],
-  }) async {
+  Future<void> _sendUserText(String text, {List<ChatAttachment> attachments = const []}) async {
     if (_conversation == null || _isGenerating) return;
-
     final now = DateTime.now();
     final userMessage = ChatMessage(
       id: now.microsecondsSinceEpoch.toString(),
@@ -280,16 +254,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _conversation!.messages.add(userMessage);
       _conversation!.updatedAt = DateTime.now();
       _pendingAttachments = [];
-
       if (_conversation!.title == 'New Chat') {
-        final titleSource = text.isNotEmpty ? text : 'Image message';
-        _conversation!.title = titleSource.length > 40
-            ? '${titleSource.substring(0, 40)}...'
-            : titleSource;
+        final source = text.isNotEmpty ? text : 'Image message';
+        _conversation!.title = source.length > 40 ? '${source.substring(0, 40)}...' : source;
       }
       _sortConversations(_conversations);
     });
-
     _messageController.clear();
     await _saveAllConversations();
     _scrollToBottom();
@@ -298,57 +268,69 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _generateResponse() async {
     if (_conversation == null || _isGenerating) return;
-
     final conversation = _conversation!;
-    final assistantMessageId = '${DateTime.now().microsecondsSinceEpoch}_assistant';
-    final assistantMessage = ChatMessage(
-      id: assistantMessageId,
+    final assistantId = '${DateTime.now().microsecondsSinceEpoch}_assistant';
+    final assistant = ChatMessage(
+      id: assistantId,
       content: '',
       role: MessageRole.assistant,
       createdAt: DateTime.now(),
     );
 
     setState(() {
-      conversation.messages.add(assistantMessage);
+      conversation.messages.add(assistant);
       conversation.updatedAt = DateTime.now();
       _isGenerating = true;
     });
-
     _scrollToBottom();
     await _saveAllConversations();
 
+    final messagesForApi = conversation.messages.where((m) => m.id != assistantId).toList();
     var generatedText = '';
-    final messagesForApi = List<ChatMessage>.from(
-      conversation.messages.where((message) => message.id != assistantMessageId),
-    );
+    var generatedReasoning = '';
 
     _generationSubscription = _apiService.streamMessage(messagesForApi).listen(
-      (chunk) {
-        generatedText += chunk;
+      (event) {
+        if (event.hasText) generatedText += event.text!;
+        if (event.hasReasoning) generatedReasoning += event.reasoning!;
         if (!mounted || _conversation?.id != conversation.id) return;
 
-        final index = conversation.messages.indexWhere((message) => message.id == assistantMessageId);
+        final index = conversation.messages.indexWhere((m) => m.id == assistantId);
         if (index == -1) return;
 
+        final old = conversation.messages[index];
+        final metadata = event.hasUsage || event.responseId != null || event.model != null || event.finishReason != null
+            ? ChatApiMetadata(
+                responseId: event.responseId ?? old.apiMetadata?.responseId,
+                model: event.model ?? old.apiMetadata?.model,
+                finishReason: event.finishReason ?? old.apiMetadata?.finishReason,
+                promptTokens: event.promptTokens ?? old.apiMetadata?.promptTokens,
+                completionTokens: event.completionTokens ?? old.apiMetadata?.completionTokens,
+                totalTokens: event.totalTokens ?? old.apiMetadata?.totalTokens,
+              )
+            : old.apiMetadata;
+
         setState(() {
-          conversation.messages[index] = conversation.messages[index].copyWith(content: generatedText);
+          conversation.messages[index] = old.copyWith(
+            content: generatedText,
+            reasoningContent: generatedReasoning,
+            apiMetadata: metadata,
+          );
           conversation.updatedAt = DateTime.now();
         });
         _scrollToBottom();
       },
       onError: (Object error) async {
         if (!mounted) return;
-
         if (_conversation?.id == conversation.id) {
           setState(() {
-            final index = conversation.messages.indexWhere((message) => message.id == assistantMessageId);
-            if (index != -1 && conversation.messages[index].content.isEmpty) {
+            final index = conversation.messages.indexWhere((m) => m.id == assistantId);
+            if (index != -1 && conversation.messages[index].content.isEmpty && conversation.messages[index].reasoningContent == null) {
               conversation.messages.removeAt(index);
             }
             _isGenerating = false;
           });
           await _saveAllConversations();
-
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $error')));
           }
@@ -357,7 +339,6 @@ class _ChatScreenState extends State<ChatScreen> {
       },
       onDone: () async {
         if (!mounted) return;
-
         if (_conversation?.id == conversation.id) {
           setState(() {
             _isGenerating = false;
@@ -376,17 +357,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_isGenerating) return;
     await _generationSubscription?.cancel();
     _generationSubscription = null;
-
     if (!mounted) return;
     setState(() {
       _isGenerating = false;
-      if (_conversation != null) {
-        _conversation!.updatedAt = DateTime.now();
-        _sortConversations(_conversations);
-      }
+      if (_conversation != null) _conversation!.updatedAt = DateTime.now();
     });
     await _saveAllConversations();
-    _scrollToBottom();
   }
 
   Future<void> _copyMessage(ChatMessage message) async {
@@ -398,95 +374,69 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _editMessage(ChatMessage message) async {
     if (_conversation == null || _isGenerating) return;
     final controller = TextEditingController(text: message.content);
-
-    final editedText = await showDialog<String>(
+    final edited = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Edit message'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          minLines: 2,
-          maxLines: 8,
-          decoration: const InputDecoration(hintText: 'Edit your message...'),
-        ),
+        content: TextField(controller: controller, autofocus: true, minLines: 2, maxLines: 8),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(controller.text.trim()), child: const Text('Save')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
         ],
       ),
     );
-
     controller.dispose();
-    if (editedText == null || editedText.isEmpty || !mounted) return;
-
+    if (edited == null || edited.isEmpty || !mounted) return;
     final index = _conversation!.messages.indexWhere((item) => item.id == message.id);
     if (index == -1) return;
-
     setState(() {
       _conversation!.messages = _conversation!.messages.take(index + 1).toList();
       _conversation!.messages[index] = ChatMessage(
         id: message.id,
-        content: editedText,
+        content: edited,
         role: MessageRole.user,
         createdAt: message.createdAt,
-        attachments: message.attachments,
       );
       _conversation!.updatedAt = DateTime.now();
-      _sortConversations(_conversations);
     });
-
     await _saveAllConversations();
-    _scrollToBottom();
     await _generateResponse();
   }
 
   Future<void> _regenerateResponse(ChatMessage message) async {
-    if (_conversation == null || _isGenerating) return;
+    if (_conversation == null || _isGenerating || !message.isAssistant) return;
     final index = _conversation!.messages.indexWhere((item) => item.id == message.id);
-    if (index == -1 || !message.isAssistant) return;
-
+    if (index == -1) return;
     setState(() {
       _conversation!.messages = _conversation!.messages.take(index).toList();
       _conversation!.updatedAt = DateTime.now();
-      _sortConversations(_conversations);
     });
     await _saveAllConversations();
-    _scrollToBottom();
     await _generateResponse();
   }
 
   Future<void> _deleteMessage(ChatMessage message) async {
     if (_conversation == null || _isGenerating) return;
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete message?'),
         content: const Text('This will remove this message and all messages after it.'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
     final index = _conversation!.messages.indexWhere((item) => item.id == message.id);
     if (index == -1) return;
-
-    setState(() {
-      _conversation!.messages = _conversation!.messages.take(index).toList();
-      _conversation!.updatedAt = DateTime.now();
-      _sortConversations(_conversations);
-    });
+    setState(() => _conversation!.messages = _conversation!.messages.take(index).toList());
     await _saveAllConversations();
-    _scrollToBottom();
   }
 
   void _useSuggestion(String prompt) {
-    if (_isGenerating) return;
-    _sendUserText(prompt);
+    if (!_isGenerating) _sendUserText(prompt);
   }
 
   void _scrollToBottom() {
@@ -518,7 +468,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-
     return Scaffold(
       key: _scaffoldKey,
       drawer: ChatDrawer(
@@ -530,7 +479,7 @@ class _ChatScreenState extends State<ChatScreen> {
         onRenameConversation: _renameConversation,
         onDeleteConversation: _deleteConversation,
         onOpenSettings: () {
-          Navigator.of(context).pop();
+          Navigator.pop(context);
           _openSettings();
         },
       ),
@@ -551,10 +500,7 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.menu),
-            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-          ),
+          IconButton(icon: const Icon(Icons.menu), onPressed: () => _scaffoldKey.currentState?.openDrawer()),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -586,33 +532,13 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(height: 8),
               Text('Powered by Kimi K3', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
               const SizedBox(height: 32),
-              _SuggestionCard(
-                icon: Icons.lightbulb_outline,
-                title: 'Explain a complex topic',
-                subtitle: 'Break something difficult down simply',
-                onTap: () => _useSuggestion('Explain a complex topic to me in a simple and easy-to-understand way.'),
-              ),
+              _SuggestionCard(icon: Icons.lightbulb_outline, title: 'Explain a complex topic', subtitle: 'Break something difficult down simply', onTap: () => _useSuggestion('Explain a complex topic to me in a simple and easy-to-understand way.')),
               const SizedBox(height: 12),
-              _SuggestionCard(
-                icon: Icons.code,
-                title: 'Help me write code',
-                subtitle: 'Solve a programming problem with me',
-                onTap: () => _useSuggestion('Help me solve a programming problem. Ask me what I am working on first.'),
-              ),
+              _SuggestionCard(icon: Icons.code, title: 'Help me write code', subtitle: 'Solve a programming problem with me', onTap: () => _useSuggestion('Help me solve a programming problem. Ask me what I am working on first.')),
               const SizedBox(height: 12),
-              _SuggestionCard(
-                icon: Icons.psychology_outlined,
-                title: 'Brainstorm ideas',
-                subtitle: 'Explore creative ideas and possibilities',
-                onTap: () => _useSuggestion('Help me brainstorm some creative ideas. Ask me what I want to brainstorm first.'),
-              ),
+              _SuggestionCard(icon: Icons.psychology_outlined, title: 'Brainstorm ideas', subtitle: 'Explore creative ideas and possibilities', onTap: () => _useSuggestion('Help me brainstorm some creative ideas. Ask me what I want to brainstorm first.')),
               const SizedBox(height: 12),
-              _SuggestionCard(
-                icon: Icons.edit_outlined,
-                title: 'Help me write something',
-                subtitle: 'Draft, rewrite, or improve my writing',
-                onTap: () => _useSuggestion('Help me write something. Ask me what I want to write first.'),
-              ),
+              _SuggestionCard(icon: Icons.edit_outlined, title: 'Help me write something', subtitle: 'Draft, rewrite, or improve my writing', onTap: () => _useSuggestion('Help me write something. Ask me what I want to write first.')),
             ],
           ),
         ),
@@ -627,23 +553,16 @@ class _ChatScreenState extends State<ChatScreen> {
       itemCount: _messages.length,
       itemBuilder: (context, index) {
         final message = _messages[index];
-        final isGeneratingMessage = _isGenerating && index == _messages.length - 1 && message.isAssistant;
-
-        if (message.content.isEmpty && message.attachments.isEmpty && isGeneratingMessage) {
+        final generating = _isGenerating && index == _messages.length - 1 && message.isAssistant;
+        if (generating && message.content.isEmpty && (message.reasoningContent == null || message.reasoningContent!.isEmpty)) {
           return const Padding(
             padding: EdgeInsets.all(16),
-            child: Row(
-              children: [
-                SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-                SizedBox(width: 12),
-                Text('Thinking...'),
-              ],
-            ),
+            child: Row(children: [SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)), SizedBox(width: 12), Text('Thinking...')]),
           );
         }
-
         return _MessageBubble(
           message: message,
+          isGenerating: generating,
           onCopy: () => _copyMessage(message),
           onEdit: message.isUser ? () => _editMessage(message) : null,
           onRegenerate: message.isAssistant ? () => _regenerateResponse(message) : null,
@@ -656,7 +575,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildInput() {
     final hasText = _messageController.text.trim().isNotEmpty;
     final canSend = hasText || _pendingAttachments.isNotEmpty;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Column(
@@ -700,10 +618,7 @@ class _ChatScreenState extends State<ChatScreen> {
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final attachment = _pendingAttachments[index];
-          return _AttachmentPreview(
-            attachment: attachment,
-            onRemove: () => _removePendingAttachment(attachment.id),
-          );
+          return _AttachmentPreview(attachment: attachment, onRemove: () => _removePendingAttachment(attachment.id));
         },
       ),
     );
@@ -712,7 +627,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
 class _SuggestionCard extends StatelessWidget {
   const _SuggestionCard({required this.icon, required this.title, required this.subtitle, required this.onTap});
-
   final IconData icon;
   final String title;
   final String subtitle;
@@ -730,16 +644,7 @@ class _SuggestionCard extends StatelessWidget {
             children: [
               Icon(icon, size: 28),
               const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    Text(subtitle, style: Theme.of(context).textTheme.bodyMedium),
-                  ],
-                ),
-              ),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)), const SizedBox(height: 4), Text(subtitle, style: Theme.of(context).textTheme.bodyMedium)])),
               const Icon(Icons.arrow_forward_ios, size: 16),
             ],
           ),
@@ -751,7 +656,6 @@ class _SuggestionCard extends StatelessWidget {
 
 class _AttachmentPreview extends StatelessWidget {
   const _AttachmentPreview({required this.attachment, required this.onRemove});
-
   final ChatAttachment attachment;
   final VoidCallback onRemove;
 
@@ -767,40 +671,19 @@ class _AttachmentPreview extends StatelessWidget {
             width: 88,
             height: 88,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: 88,
-              height: 88,
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: const Icon(Icons.broken_image_outlined),
-            ),
+            errorBuilder: (_, __, ___) => Container(width: 88, height: 88, color: Theme.of(context).colorScheme.surfaceContainerHighest, child: const Icon(Icons.broken_image_outlined)),
           ),
         ),
-        Positioned(
-          right: -6,
-          top: -6,
-          child: IconButton.filledTonal(
-            visualDensity: VisualDensity.compact,
-            iconSize: 18,
-            tooltip: 'Remove image',
-            onPressed: onRemove,
-            icon: const Icon(Icons.close),
-          ),
-        ),
+        Positioned(right: -6, top: -6, child: IconButton.filledTonal(visualDensity: VisualDensity.compact, iconSize: 18, tooltip: 'Remove image', onPressed: onRemove, icon: const Icon(Icons.close))),
       ],
     );
   }
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({
-    required this.message,
-    required this.onCopy,
-    required this.onEdit,
-    required this.onRegenerate,
-    required this.onDelete,
-  });
-
+  const _MessageBubble({required this.message, required this.isGenerating, required this.onCopy, required this.onEdit, required this.onRegenerate, required this.onDelete});
   final ChatMessage message;
+  final bool isGenerating;
   final VoidCallback onCopy;
   final VoidCallback? onEdit;
   final VoidCallback? onRegenerate;
@@ -824,6 +707,8 @@ class _MessageBubble extends StatelessWidget {
           children: [
             if (message.attachments.isNotEmpty) _buildMessageImages(context, isUser),
             if (message.attachments.isNotEmpty && message.content.isNotEmpty) const SizedBox(height: 10),
+            if (!isUser && message.reasoningContent != null && message.reasoningContent!.isNotEmpty)
+              _ReasoningSection(reasoning: message.reasoningContent!, textColor: textColor, isGenerating: isGenerating),
             if (message.content.isNotEmpty)
               isUser
                   ? Text(message.content, style: TextStyle(color: textColor))
@@ -837,23 +722,11 @@ class _MessageBubble extends StatelessWidget {
                         h2: TextStyle(color: textColor, fontSize: 21, fontWeight: FontWeight.bold),
                         h3: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold),
                         code: TextStyle(color: textColor, fontFamily: 'monospace'),
-                        codeblockDecoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        codeblockDecoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
             const SizedBox(height: 4),
-            Align(
-              alignment: Alignment.centerRight,
-              child: MessageActions(
-                isUser: isUser,
-                onCopy: onCopy,
-                onEdit: onEdit,
-                onRegenerate: onRegenerate,
-                onDelete: onDelete,
-              ),
-            ),
+            Align(alignment: Alignment.centerRight, child: MessageActions(isUser: isUser, onCopy: onCopy, onEdit: onEdit, onRegenerate: onRegenerate, onDelete: onDelete)),
           ],
         ),
       ),
@@ -861,28 +734,48 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _buildMessageImages(BuildContext context, bool isUser) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: message.attachments.map((attachment) {
-        return ClipRRect(
+    if (message.attachments.length == 1) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.memory(decodeAttachmentImage(message.attachments.first), height: 240, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined))),
+      );
+    }
+    return SizedBox(
+      height: 180,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: message.attachments.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) => ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Image.memory(
-            decodeAttachmentImage(attachment),
-            width: message.attachments.length == 1 ? 280 : 130,
-            height: message.attachments.length == 1 ? 210 : 130,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: 130,
-              height: 130,
-              color: isUser
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: const Icon(Icons.broken_image_outlined),
-            ),
-          ),
-        );
-      }).toList(),
+          child: Image.memory(decodeAttachmentImage(message.attachments[index]), width: 180, height: 180, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(width: 180, child: Icon(Icons.broken_image_outlined))),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReasoningSection extends StatelessWidget {
+  const _ReasoningSection({required this.reasoning, required this.textColor, required this.isGenerating});
+  final String reasoning;
+  final Color textColor;
+  final bool isGenerating;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(bottom: 8),
+          initiallyExpanded: isGenerating,
+          leading: Icon(isGenerating ? Icons.psychology : Icons.psychology_outlined, size: 20),
+          title: Text(isGenerating ? 'Thinking...' : 'Reasoning', style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.w600)),
+          children: [Align(alignment: Alignment.centerLeft, child: SelectableText(reasoning, style: TextStyle(color: textColor.withValues(alpha: 0.78), fontSize: 14, height: 1.4)))],
+        ),
+      ),
     );
   }
 }
