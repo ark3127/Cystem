@@ -57,6 +57,7 @@ class ChatMessage {
   final String? toolCallId;
   final String? toolName;
   final List<ChatAttachment> attachments;
+  final String? backendContext;
   final ChatApiMetadata? apiMetadata;
 
   const ChatMessage({
@@ -69,6 +70,7 @@ class ChatMessage {
     this.toolCallId,
     this.toolName,
     this.attachments = const [],
+    this.backendContext,
     this.apiMetadata,
   });
 
@@ -83,6 +85,7 @@ class ChatMessage {
     String? toolCallId,
     String? toolName,
     List<ChatAttachment>? attachments,
+    String? backendContext,
     ChatApiMetadata? apiMetadata,
   }) {
     return ChatMessage(
@@ -95,6 +98,7 @@ class ChatMessage {
       toolCallId: toolCallId ?? this.toolCallId,
       toolName: toolName ?? this.toolName,
       attachments: attachments ?? this.attachments,
+      backendContext: backendContext ?? this.backendContext,
       apiMetadata: apiMetadata ?? this.apiMetadata,
     );
   }
@@ -112,6 +116,7 @@ class ChatMessage {
       if (toolName != null) 'toolName': toolName,
       if (attachments.isNotEmpty)
         'attachments': attachments.map((item) => item.toJson()).toList(),
+      if (backendContext != null) 'backendContext': backendContext,
       if (apiMetadata != null) 'apiMetadata': apiMetadata!.toJson(),
     };
   }
@@ -139,6 +144,7 @@ class ChatMessage {
                 Map<String, dynamic>.from(item as Map),
               ))
           .toList(),
+      backendContext: json['backendContext'] as String?,
       apiMetadata: rawMetadata is Map
           ? ChatApiMetadata.fromJson(
               Map<String, dynamic>.from(rawMetadata),
