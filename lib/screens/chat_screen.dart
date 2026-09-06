@@ -9,9 +9,11 @@ import '../models/chat_attachment.dart';
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
 import '../models/chat_stream_event.dart';
+import '../services/chat_generation_service.dart';
 import '../services/chat_storage_service.dart';
 import '../services/image_attachment_service.dart';
-import '../services/nvidia_api_service.dart';
+import '../services/phone_tool_registry.dart';
+import '../services/phone_tool_service.dart';
 import '../widgets/chat_drawer.dart';
 import '../widgets/code_block.dart';
 import '../widgets/message_actions.dart';
@@ -27,9 +29,12 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
-  final _apiService = NvidiaApiService();
   final _storageService = ChatStorageService();
   final _imageService = ImageAttachmentService();
+  final _generationService = ChatGenerationService(
+    toolRegistry: PhoneToolRegistry.create(),
+    toolExecutor: PhoneToolService(),
+  );
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   StreamSubscription<ChatStreamEvent>? _generationSubscription;
@@ -38,6 +43,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatAttachment> _pendingAttachments = [];
   bool _isGenerating = false;
   bool _isLoading = true;
+  bool _userIsNearBottom = true;
 
   List<ChatMessage> get _messages => _conversation?.messages ?? [];
 
@@ -45,6 +51,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _messageController.addListener(_onInputChanged);
+    _scrollController.addListener(_onScroll);
     _loadConversations();
   }
 
@@ -52,10 +59,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() {});
   }
 
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final distance = _scrollController.position.maxScrollExtent - _scrollController.position.pixels;
+    _userIsNearBottom = distance < 180;
+    if (mounted) setState(() {});
+  }
+
   Future<void> _loadConversations() async {
     final conversations = await _storageService.loadConversations();
     _sortConversations(conversations);
-
     if (conversations.isEmpty) {
       final conversation = _createConversation();
       conversations.add(conversation);
@@ -64,13 +77,12 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       _conversation = conversations.first;
     }
-
     if (!mounted) return;
     setState(() {
       _conversations = conversations;
       _isLoading = false;
     });
-    _scrollToBottom();
+    _scrollToBottom(jump: true);
   }
 
   ChatConversation _createConversation() {
@@ -106,6 +118,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     await _saveAllConversations();
     if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
+    _scrollToBottom(jump: true);
   }
 
   Future<void> _selectConversation(ChatConversation conversation) async {
@@ -114,8 +127,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _conversation = conversation;
       _pendingAttachments = [];
     });
-    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-    _scrollToBottom();
+    if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
+    _scrollToBottom(jump: true);
   }
 
   Future<void> _togglePin(ChatConversation conversation) async {
@@ -131,7 +144,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _renameConversation(ChatConversation conversation) async {
     if (_isGenerating) return;
     final controller = TextEditingController(text: conversation.title);
-    final newTitle = await showDialog<String>(
+    final title = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Rename chat'),
@@ -148,11 +161,10 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     controller.dispose();
-    if (newTitle == null || newTitle.isEmpty || !mounted) return;
+    if (title == null || title.isEmpty || !mounted) return;
     setState(() {
-      conversation.title = newTitle;
+      conversation.title = title;
       conversation.updatedAt = DateTime.now();
-      _sortConversations(_conversations);
     });
     await _saveAllConversations();
   }
@@ -171,14 +183,12 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-
     setState(() {
       _conversations.removeWhere((item) => item.id == conversation.id);
       if (_conversation?.id == conversation.id) {
         if (_conversations.isEmpty) {
-          final newConversation = _createConversation();
-          _conversations.add(newConversation);
-          _conversation = newConversation;
+          _conversation = _createConversation();
+          _conversations.add(_conversation!);
         } else {
           _sortConversations(_conversations);
           _conversation = _conversations.first;
@@ -187,50 +197,48 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingAttachments = [];
     });
     await _saveAllConversations();
-    _scrollToBottom();
+    _scrollToBottom(jump: true);
   }
 
   Future<void> _pickImage() async {
     if (_isGenerating) return;
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
+      showDragHandle: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt_outlined),
-              title: const Text('Take a photo'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-            const SizedBox(height: 8),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from gallery'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Take a photo'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+            ],
+          ),
         ),
       ),
     );
     if (source == null || !mounted) return;
-
     try {
       final attachment = await _imageService.pickImage(source);
       if (attachment == null || !mounted) return;
       setState(() => _pendingAttachments = [..._pendingAttachments, attachment]);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not add image: $error')),
-      );
+      _showSnack('Could not add image: $error');
     }
   }
 
   void _removePendingAttachment(String id) {
-    setState(() {
-      _pendingAttachments = _pendingAttachments.where((item) => item.id != id).toList();
-    });
+    setState(() => _pendingAttachments = _pendingAttachments.where((item) => item.id != id).toList());
   }
 
   Future<void> _sendMessage() async {
@@ -249,7 +257,6 @@ class _ChatScreenState extends State<ChatScreen> {
       createdAt: now,
       attachments: attachments,
     );
-
     setState(() {
       _conversation!.messages.add(userMessage);
       _conversation!.updatedAt = DateTime.now();
@@ -258,11 +265,10 @@ class _ChatScreenState extends State<ChatScreen> {
         final source = text.isNotEmpty ? text : 'Image message';
         _conversation!.title = source.length > 40 ? '${source.substring(0, 40)}...' : source;
       }
-      _sortConversations(_conversations);
     });
     _messageController.clear();
     await _saveAllConversations();
-    _scrollToBottom();
+    _scrollToBottom(jump: true);
     await _generateResponse();
   }
 
@@ -281,25 +287,37 @@ class _ChatScreenState extends State<ChatScreen> {
       conversation.messages.add(assistant);
       conversation.updatedAt = DateTime.now();
       _isGenerating = true;
+      _userIsNearBottom = true;
     });
-    _scrollToBottom();
+    _scrollToBottom(jump: true);
     await _saveAllConversations();
 
     final messagesForApi = conversation.messages.where((m) => m.id != assistantId).toList();
     var generatedText = '';
     var generatedReasoning = '';
 
-    _generationSubscription = _apiService.streamMessage(messagesForApi).listen(
+    _generationSubscription = _generationService.generate(
+      messagesForApi,
+      onToolMessage: (message) async {
+        if (!mounted || _conversation?.id != conversation.id) return;
+        final placeholderIndex = conversation.messages.indexWhere((m) => m.id == assistantId);
+        if (placeholderIndex == -1) return;
+        setState(() {
+          conversation.messages.insert(placeholderIndex, message);
+          conversation.updatedAt = DateTime.now();
+        });
+        await _saveAllConversations();
+        _scrollToBottom();
+      },
+    ).listen(
       (event) {
         if (event.hasText) generatedText += event.text!;
         if (event.hasReasoning) generatedReasoning += event.reasoning!;
         if (!mounted || _conversation?.id != conversation.id) return;
-
         final index = conversation.messages.indexWhere((m) => m.id == assistantId);
         if (index == -1) return;
-
         final old = conversation.messages[index];
-        final metadata = event.hasUsage || event.responseId != null || event.model != null || event.finishReason != null
+        final metadata = event.responseId != null || event.model != null || event.finishReason != null || event.hasUsage
             ? ChatApiMetadata(
                 responseId: event.responseId ?? old.apiMetadata?.responseId,
                 model: event.model ?? old.apiMetadata?.model,
@@ -309,11 +327,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 totalTokens: event.totalTokens ?? old.apiMetadata?.totalTokens,
               )
             : old.apiMetadata;
-
         setState(() {
           conversation.messages[index] = old.copyWith(
             content: generatedText,
-            reasoningContent: generatedReasoning,
+            reasoningContent: generatedReasoning.isEmpty ? old.reasoningContent : generatedReasoning,
             apiMetadata: metadata,
           );
           conversation.updatedAt = DateTime.now();
@@ -321,33 +338,27 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollToBottom();
       },
       onError: (Object error) async {
-        if (!mounted) return;
-        if (_conversation?.id == conversation.id) {
-          setState(() {
-            final index = conversation.messages.indexWhere((m) => m.id == assistantId);
-            if (index != -1 && conversation.messages[index].content.isEmpty && conversation.messages[index].reasoningContent == null) {
-              conversation.messages.removeAt(index);
-            }
-            _isGenerating = false;
-          });
-          await _saveAllConversations();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $error')));
+        if (!mounted || _conversation?.id != conversation.id) return;
+        setState(() {
+          final index = conversation.messages.indexWhere((m) => m.id == assistantId);
+          if (index != -1 && conversation.messages[index].content.isEmpty && conversation.messages[index].reasoningContent == null) {
+            conversation.messages.removeAt(index);
           }
-        }
+          _isGenerating = false;
+        });
+        await _saveAllConversations();
+        _showSnack('Error: $error');
         _generationSubscription = null;
       },
       onDone: () async {
-        if (!mounted) return;
-        if (_conversation?.id == conversation.id) {
-          setState(() {
-            _isGenerating = false;
-            conversation.updatedAt = DateTime.now();
-            _sortConversations(_conversations);
-          });
-          await _saveAllConversations();
-        }
+        if (!mounted || _conversation?.id != conversation.id) return;
+        setState(() {
+          _isGenerating = false;
+          conversation.updatedAt = DateTime.now();
+        });
+        await _saveAllConversations();
         _generationSubscription = null;
+        _scrollToBottom();
       },
       cancelOnError: true,
     );
@@ -367,8 +378,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _copyMessage(ChatMessage message) async {
     await Clipboard.setData(ClipboardData(text: message.content));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+    if (mounted) _showSnack('Copied to clipboard');
   }
 
   Future<void> _editMessage(ChatMessage message) async {
@@ -381,7 +391,7 @@ class _ChatScreenState extends State<ChatScreen> {
         content: TextField(controller: controller, autofocus: true, minLines: 2, maxLines: 8),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Send')),
         ],
       ),
     );
@@ -396,6 +406,7 @@ class _ChatScreenState extends State<ChatScreen> {
         content: edited,
         role: MessageRole.user,
         createdAt: message.createdAt,
+        attachments: message.attachments,
       );
       _conversation!.updatedAt = DateTime.now();
     });
@@ -421,7 +432,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete message?'),
-        content: const Text('This will remove this message and all messages after it.'),
+        content: const Text('This will remove this message and everything after it.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
@@ -439,15 +450,20 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_isGenerating) _sendUserText(prompt);
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool jump = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-      );
+      if (!_scrollController.hasClients || (!_userIsNearBottom && !jump)) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (jump) {
+        _scrollController.jumpTo(target);
+      } else {
+        _scrollController.animateTo(target, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+      }
     });
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _openSettings() {
@@ -459,6 +475,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _generationSubscription?.cancel();
     _messageController.removeListener(_onInputChanged);
     _messageController.dispose();
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -497,21 +514,21 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
       child: Row(
         children: [
-          IconButton(icon: const Icon(Icons.menu), onPressed: () => _scaffoldKey.currentState?.openDrawer()),
-          const SizedBox(width: 8),
+          IconButton(tooltip: 'Chats', icon: const Icon(Icons.menu), onPressed: () => _scaffoldKey.currentState?.openDrawer()),
           Expanded(
-            child: Text(
-              _conversation?.title ?? 'CYSTEM',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_conversation?.title ?? 'CYSTEM', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                Text('Kimi K3', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              ],
             ),
           ),
-          IconButton(icon: const Icon(Icons.add), tooltip: 'New chat', onPressed: _isGenerating ? null : _createNewChat),
-          IconButton(icon: const Icon(Icons.settings_outlined), onPressed: _openSettings),
+          IconButton(tooltip: 'New chat', icon: const Icon(Icons.add), onPressed: _isGenerating ? null : _createNewChat),
+          IconButton(tooltip: 'Settings', icon: const Icon(Icons.settings_outlined), onPressed: _openSettings),
         ],
       ),
     );
@@ -520,24 +537,25 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildWelcome() {
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 650),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.auto_awesome, size: 56),
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(color: Theme.of(context).colorScheme.primaryContainer, shape: BoxShape.circle),
+                child: Icon(Icons.auto_awesome, size: 34, color: Theme.of(context).colorScheme.onPrimaryContainer),
+              ),
               const SizedBox(height: 20),
-              Text('What can I help you with?', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall),
+              Text('What can I help you with?', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              Text('Powered by Kimi K3', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 32),
+              Text('Ask questions, share images, or let CYSTEM use your phone tools.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              const SizedBox(height: 28),
               _SuggestionCard(icon: Icons.lightbulb_outline, title: 'Explain a complex topic', subtitle: 'Break something difficult down simply', onTap: () => _useSuggestion('Explain a complex topic to me in a simple and easy-to-understand way.')),
-              const SizedBox(height: 12),
               _SuggestionCard(icon: Icons.code, title: 'Help me write code', subtitle: 'Solve a programming problem with me', onTap: () => _useSuggestion('Help me solve a programming problem. Ask me what I am working on first.')),
-              const SizedBox(height: 12),
               _SuggestionCard(icon: Icons.psychology_outlined, title: 'Brainstorm ideas', subtitle: 'Explore creative ideas and possibilities', onTap: () => _useSuggestion('Help me brainstorm some creative ideas. Ask me what I want to brainstorm first.')),
-              const SizedBox(height: 12),
               _SuggestionCard(icon: Icons.edit_outlined, title: 'Help me write something', subtitle: 'Draft, rewrite, or improve my writing', onTap: () => _useSuggestion('Help me write something. Ask me what I want to write first.')),
             ],
           ),
@@ -547,76 +565,103 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessages() {
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: _messages.length,
-      itemBuilder: (context, index) {
-        final message = _messages[index];
-        final generating = _isGenerating && index == _messages.length - 1 && message.isAssistant;
-        if (generating && message.content.isEmpty && (message.reasoningContent == null || message.reasoningContent!.isEmpty)) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Row(children: [SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)), SizedBox(width: 12), Text('Thinking...')]),
-          );
-        }
-        return _MessageBubble(
-          message: message,
-          isGenerating: generating,
-          onCopy: () => _copyMessage(message),
-          onEdit: message.isUser ? () => _editMessage(message) : null,
-          onRegenerate: message.isAssistant ? () => _regenerateResponse(message) : null,
-          onDelete: () => _deleteMessage(message),
-        );
-      },
+    return Stack(
+      children: [
+        ListView.builder(
+          controller: _scrollController,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+          itemCount: _messages.length,
+          itemBuilder: (context, index) {
+            final message = _messages[index];
+            final generating = _isGenerating && index == _messages.length - 1 && message.isAssistant;
+            return _MessageBubble(
+              message: message,
+              isGenerating: generating,
+              onCopy: message.content.isEmpty ? null : () => _copyMessage(message),
+              onEdit: message.isUser ? () => _editMessage(message) : null,
+              onRegenerate: message.isAssistant && !message.isTool ? () => _regenerateResponse(message) : null,
+              onDelete: () => _deleteMessage(message),
+            );
+          },
+        ),
+        if (!_userIsNearBottom && _messages.isNotEmpty)
+          Positioned(
+            right: 20,
+            bottom: 16,
+            child: FloatingActionButton.small(
+              heroTag: 'scroll_to_bottom',
+              tooltip: 'Jump to latest',
+              onPressed: () {
+                _userIsNearBottom = true;
+                _scrollToBottom(jump: true);
+              },
+              child: const Icon(Icons.keyboard_arrow_down),
+            ),
+          ),
+      ],
     );
   }
 
   Widget _buildInput() {
-    final hasText = _messageController.text.trim().isNotEmpty;
-    final canSend = hasText || _pendingAttachments.isNotEmpty;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_pendingAttachments.isNotEmpty) _buildAttachmentStrip(),
-          TextField(
-            controller: _messageController,
-            minLines: 1,
-            maxLines: 6,
-            textInputAction: TextInputAction.newline,
-            onSubmitted: (_) {
-              if (!_isGenerating && canSend) _sendMessage();
-            },
-            decoration: InputDecoration(
-              hintText: _isGenerating ? 'CYSTEM is responding...' : 'Ask anything...',
-              prefixIcon: IconButton(
-                tooltip: 'Add image',
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                onPressed: _isGenerating ? null : _pickImage,
+    final canSend = _messageController.text.trim().isNotEmpty || _pendingAttachments.isNotEmpty;
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_pendingAttachments.isNotEmpty) _buildAttachmentStrip(),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
               ),
-              suffixIcon: IconButton(
-                tooltip: _isGenerating ? 'Stop generating' : 'Send message',
-                icon: Icon(_isGenerating ? Icons.stop : Icons.arrow_upward),
-                onPressed: _isGenerating ? _stopGeneration : canSend ? _sendMessage : null,
+              child: TextField(
+                controller: _messageController,
+                minLines: 1,
+                maxLines: 6,
+                textCapitalization: TextCapitalization.sentences,
+                textInputAction: TextInputAction.newline,
+                decoration: InputDecoration(
+                  hintText: _isGenerating ? 'CYSTEM is thinking...' : 'Message CYSTEM',
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+                  prefixIcon: IconButton(tooltip: 'Add image', icon: const Icon(Icons.add), onPressed: _isGenerating ? null : _pickImage),
+                  suffixIcon: Padding(
+                    padding: const EdgeInsets.only(right: 5),
+                    child: IconButton.filled(
+                      tooltip: _isGenerating ? 'Stop generating' : 'Send message',
+                      icon: Icon(_isGenerating ? Icons.stop_rounded : Icons.arrow_upward_rounded),
+                      onPressed: _isGenerating ? _stopGeneration : canSend ? _sendMessage : null,
+                    ),
+                  ),
+                ),
+                onSubmitted: (_) {
+                  if (!_isGenerating && canSend) _sendMessage();
+                },
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 5),
+            Text('CYSTEM can make phone actions only after you confirm them.', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildAttachmentStrip() {
     return SizedBox(
-      height: 96,
+      height: 92,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(left: 4, right: 4, bottom: 7),
         itemCount: _pendingAttachments.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
+        itemBuilder: (_, index) {
           final attachment = _pendingAttachments[index];
           return _AttachmentPreview(attachment: attachment, onRemove: () => _removePendingAttachment(attachment.id));
         },
@@ -635,17 +680,19 @@ class _SuggestionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      margin: const EdgeInsets.only(bottom: 10),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
-              Icon(icon, size: 28),
-              const SizedBox(width: 16),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)), const SizedBox(height: 4), Text(subtitle, style: Theme.of(context).textTheme.bodyMedium)])),
-              const Icon(Icons.arrow_forward_ios, size: 16),
+              Icon(icon, size: 25),
+              const SizedBox(width: 15),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)), const SizedBox(height: 3), Text(subtitle, style: Theme.of(context).textTheme.bodySmall)])),
+              const SizedBox(width: 8),
+              const Icon(Icons.arrow_forward_ios_rounded, size: 14),
             ],
           ),
         ),
@@ -665,16 +712,16 @@ class _AttachmentPreview extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           child: Image.memory(
             decodeAttachmentImage(attachment),
-            width: 88,
-            height: 88,
+            width: 82,
+            height: 82,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(width: 88, height: 88, color: Theme.of(context).colorScheme.surfaceContainerHighest, child: const Icon(Icons.broken_image_outlined)),
+            errorBuilder: (_, __, ___) => Container(width: 82, height: 82, color: Theme.of(context).colorScheme.surfaceContainerHighest, child: const Icon(Icons.broken_image_outlined)),
           ),
         ),
-        Positioned(right: -6, top: -6, child: IconButton.filledTonal(visualDensity: VisualDensity.compact, iconSize: 18, tooltip: 'Remove image', onPressed: onRemove, icon: const Icon(Icons.close))),
+        Positioned(right: -7, top: -7, child: IconButton.filledTonal(visualDensity: VisualDensity.compact, iconSize: 17, tooltip: 'Remove image', onPressed: onRemove, icon: const Icon(Icons.close))),
       ],
     );
   }
@@ -684,59 +731,95 @@ class _MessageBubble extends StatelessWidget {
   const _MessageBubble({required this.message, required this.isGenerating, required this.onCopy, required this.onEdit, required this.onRegenerate, required this.onDelete});
   final ChatMessage message;
   final bool isGenerating;
-  final VoidCallback onCopy;
+  final VoidCallback? onCopy;
   final VoidCallback? onEdit;
   final VoidCallback? onRegenerate;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
+    if (message.isTool) return _buildToolMessage(context);
+    final scheme = Theme.of(context).colorScheme;
     final isUser = message.isUser;
-    final backgroundColor = isUser ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.surface;
-    final textColor = isUser ? Theme.of(context).colorScheme.onPrimary : Theme.of(context).colorScheme.onSurface;
+    final background = isUser ? scheme.primary : scheme.surfaceContainerLow;
+    final foreground = isUser ? scheme.onPrimary : scheme.onSurface;
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 600),
+        constraints: const BoxConstraints(maxWidth: 720),
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-        decoration: BoxDecoration(color: backgroundColor, borderRadius: BorderRadius.circular(18)),
+        padding: const EdgeInsets.fromLTRB(16, 13, 10, 7),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(20),
+            topRight: const Radius.circular(20),
+            bottomLeft: Radius.circular(isUser ? 20 : 5),
+            bottomRight: Radius.circular(isUser ? 5 : 20),
+          ),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (message.attachments.isNotEmpty) _buildMessageImages(context, isUser),
+            if (message.attachments.isNotEmpty) _buildImages(context),
             if (message.attachments.isNotEmpty && message.content.isNotEmpty) const SizedBox(height: 10),
             if (!isUser && message.reasoningContent != null && message.reasoningContent!.isNotEmpty)
-              _ReasoningSection(reasoning: message.reasoningContent!, textColor: textColor, isGenerating: isGenerating),
+              _ReasoningSection(reasoning: message.reasoningContent!, textColor: foreground, isGenerating: isGenerating),
+            if (message.content.isEmpty && isGenerating) _ThinkingIndicator(color: foreground),
             if (message.content.isNotEmpty)
               isUser
-                  ? Text(message.content, style: TextStyle(color: textColor))
+                  ? SelectableText(message.content, style: TextStyle(color: foreground, fontSize: 16, height: 1.4))
                   : MarkdownBody(
                       data: message.content,
                       selectable: true,
                       builders: {'pre': CodeBlockBuilder()},
                       styleSheet: MarkdownStyleSheet(
-                        p: TextStyle(color: textColor, fontSize: 16, height: 1.45),
-                        h1: TextStyle(color: textColor, fontSize: 24, fontWeight: FontWeight.bold),
-                        h2: TextStyle(color: textColor, fontSize: 21, fontWeight: FontWeight.bold),
-                        h3: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold),
-                        code: TextStyle(color: textColor, fontFamily: 'monospace'),
-                        codeblockDecoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
+                        p: TextStyle(color: foreground, fontSize: 16, height: 1.45),
+                        h1: TextStyle(color: foreground, fontSize: 24, fontWeight: FontWeight.bold),
+                        h2: TextStyle(color: foreground, fontSize: 21, fontWeight: FontWeight.bold),
+                        h3: TextStyle(color: foreground, fontSize: 18, fontWeight: FontWeight.bold),
+                        code: TextStyle(color: foreground, fontFamily: 'monospace'),
+                        codeblockDecoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
-            const SizedBox(height: 4),
-            Align(alignment: Alignment.centerRight, child: MessageActions(isUser: isUser, onCopy: onCopy, onEdit: onEdit, onRegenerate: onRegenerate, onDelete: onDelete)),
+            if (onCopy != null || onEdit != null || onRegenerate != null)
+              Align(alignment: Alignment.centerRight, child: MessageActions(isUser: isUser, onCopy: onCopy, onEdit: onEdit, onRegenerate: onRegenerate, onDelete: onDelete)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMessageImages(BuildContext context, bool isUser) {
+  Widget _buildToolMessage(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 720),
+        margin: const EdgeInsets.only(left: 8, bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.build_circle_outlined, size: 18, color: scheme.onSecondaryContainer),
+            const SizedBox(width: 9),
+            Expanded(child: Text(message.toolName == null ? message.content : '${message.toolName}: ${message.content}', style: TextStyle(color: scheme.onSecondaryContainer, fontSize: 13))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImages(BuildContext context) {
     if (message.attachments.length == 1) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         child: Image.memory(decodeAttachmentImage(message.attachments.first), height: 240, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined))),
       );
     }
@@ -747,8 +830,8 @@ class _MessageBubble extends StatelessWidget {
         itemCount: message.attachments.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, index) => ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Image.memory(decodeAttachmentImage(message.attachments[index]), width: 180, height: 180, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(width: 180, child: Icon(Icons.broken_image_outlined))),
+          borderRadius: BorderRadius.circular(14),
+          child: Image.memory(decodeAttachmentImage(message.attachments[index]), width: 180, height: 180, fit: BoxFit.cover),
         ),
       ),
     );
@@ -772,10 +855,27 @@ class _ReasoningSection extends StatelessWidget {
           childrenPadding: const EdgeInsets.only(bottom: 8),
           initiallyExpanded: isGenerating,
           leading: Icon(isGenerating ? Icons.psychology : Icons.psychology_outlined, size: 20),
-          title: Text(isGenerating ? 'Thinking...' : 'Reasoning', style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.w600)),
+          title: Text(isGenerating ? 'Thinking…' : 'Reasoning', style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.w600)),
           children: [Align(alignment: Alignment.centerLeft, child: SelectableText(reasoning, style: TextStyle(color: textColor.withValues(alpha: 0.78), fontSize: 14, height: 1.4)))],
         ),
       ),
+    );
+  }
+}
+
+class _ThinkingIndicator extends StatelessWidget {
+  const _ThinkingIndicator({required this.color});
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(width: 17, height: 17, child: CircularProgressIndicator(strokeWidth: 2, color: color)),
+        const SizedBox(width: 10),
+        Text('Thinking…', style: TextStyle(color: color.withValues(alpha: 0.75), fontSize: 14)),
+      ],
     );
   }
 }
