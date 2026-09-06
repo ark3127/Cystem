@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_message.dart';
+import '../models/chat_stream_event.dart';
 import 'app_settings_service.dart';
 import 'secure_storage_service.dart';
 
@@ -26,11 +27,10 @@ class NvidiaApiService {
 
   static const String model = 'moonshotai/kimi-k3';
 
-  final SecureStorageService _secureStorageService =
-      SecureStorageService();
+  final SecureStorageService _secureStorageService = SecureStorageService();
   final AppSettingsService _settingsService = AppSettingsService();
 
-  Stream<String> streamMessage(
+  Stream<ChatStreamEvent> streamMessage(
     List<ChatMessage> messages, {
     String? reasoningEffort,
     double? temperature,
@@ -39,9 +39,9 @@ class NvidiaApiService {
     bool clearSeed = false,
   }) {
     http.Client? client;
-    late final StreamController<String> controller;
+    late final StreamController<ChatStreamEvent> controller;
 
-    controller = StreamController<String>(
+    controller = StreamController<ChatStreamEvent>(
       onListen: () async {
         client = http.Client();
 
@@ -59,10 +59,8 @@ class NvidiaApiService {
               reasoningEffort ?? savedSettings.reasoningEffort;
           final effectiveTemperature =
               temperature ?? savedSettings.temperature;
-          final effectiveMaxTokens =
-              maxTokens ?? savedSettings.maxTokens;
-          final effectiveSeed =
-              clearSeed ? null : (seed ?? savedSettings.seed);
+          final effectiveMaxTokens = maxTokens ?? savedSettings.maxTokens;
+          final effectiveSeed = clearSeed ? null : (seed ?? savedSettings.seed);
 
           final apiMessages = <Map<String, dynamic>>[];
           final systemPrompt = savedSettings.systemPrompt.trim();
@@ -74,15 +72,9 @@ class NvidiaApiService {
             });
           }
 
-          apiMessages.addAll(
-            messages.map((message) => message.toApiJson()),
-          );
+          apiMessages.addAll(messages.map((message) => message.toApiJson()));
 
-          final request = http.Request(
-            'POST',
-            Uri.parse(_baseUrl),
-          );
-
+          final request = http.Request('POST', Uri.parse(_baseUrl));
           request.headers.addAll({
             'Authorization': 'Bearer $apiKey',
             'Content-Type': 'application/json',
@@ -97,9 +89,7 @@ class NvidiaApiService {
             'reasoning_effort': effectiveReasoningEffort,
             if (effectiveSeed != null) 'seed': effectiveSeed,
             'stream': true,
-            'stream_options': {
-              'include_usage': true,
-            },
+            'stream_options': {'include_usage': true},
           });
 
           final response = await client!.send(request);
@@ -111,55 +101,101 @@ class NvidiaApiService {
 
           String buffer = '';
 
-          await for (final chunk
-              in response.stream.transform(utf8.decoder)) {
+          await for (final chunk in response.stream.transform(utf8.decoder)) {
             buffer += chunk;
-
             final lines = buffer.split('\n');
             buffer = lines.removeLast();
 
             for (final rawLine in lines) {
               final line = rawLine.trim();
-
-              if (!line.startsWith('data:')) {
-                continue;
-              }
+              if (!line.startsWith('data:')) continue;
 
               final data = line.substring(5).trim();
-
               if (data == '[DONE]') {
-                if (!controller.isClosed) {
-                  await controller.close();
-                }
+                if (!controller.isClosed) await controller.close();
                 return;
               }
-
-              if (data.isEmpty) {
-                continue;
-              }
+              if (data.isEmpty) continue;
 
               try {
                 final decoded = jsonDecode(data);
+                if (decoded is! Map) continue;
+
                 final choices = decoded['choices'];
+                final usage = decoded['usage'];
 
-                if (choices is! List || choices.isEmpty) {
-                  continue;
+                String? responseId;
+                String? responseModel;
+                if (decoded['id'] is String) responseId = decoded['id'] as String;
+                if (decoded['model'] is String) responseModel = decoded['model'] as String;
+
+                String? text;
+                String? reasoning;
+                String? finishReason;
+                final toolCalls = <ChatToolCall>[];
+
+                if (choices is List && choices.isNotEmpty && choices.first is Map) {
+                  final choice = choices.first as Map;
+                  if (choice['finish_reason'] is String) {
+                    finishReason = choice['finish_reason'] as String;
+                  }
+
+                  final delta = choice['delta'];
+                  if (delta is Map) {
+                    if (delta['content'] is String) text = delta['content'] as String;
+                    if (delta['reasoning_content'] is String) {
+                      reasoning = delta['reasoning_content'] as String;
+                    }
+
+                    final rawToolCalls = delta['tool_calls'];
+                    if (rawToolCalls is List) {
+                      for (final rawCall in rawToolCalls) {
+                        if (rawCall is! Map) continue;
+                        final function = rawCall['function'];
+                        if (function is! Map) continue;
+                        final id = rawCall['id'];
+                        final name = function['name'];
+                        final arguments = function['arguments'];
+                        if (id is String && name is String) {
+                          toolCalls.add(ChatToolCall(
+                            id: id,
+                            name: name,
+                            arguments: arguments is String ? arguments : '{}',
+                          ));
+                        }
+                      }
+                    }
+                  }
                 }
 
-                final choice = choices.first;
-                if (choice is! Map) {
-                  continue;
+                int? promptTokens;
+                int? completionTokens;
+                int? totalTokens;
+                if (usage is Map) {
+                  if (usage['prompt_tokens'] is num) {
+                    promptTokens = (usage['prompt_tokens'] as num).toInt();
+                  }
+                  if (usage['completion_tokens'] is num) {
+                    completionTokens = (usage['completion_tokens'] as num).toInt();
+                  }
+                  if (usage['total_tokens'] is num) {
+                    totalTokens = (usage['total_tokens'] as num).toInt();
+                  }
                 }
 
-                final delta = choice['delta'];
-                if (delta is! Map) {
-                  continue;
-                }
-
-                final content = delta['content'];
-
-                if (content is String && content.isNotEmpty) {
-                  controller.add(content);
+                if (text != null || reasoning != null || toolCalls.isNotEmpty ||
+                    finishReason != null || usage is Map) {
+                  controller.add(ChatStreamEvent(
+                    text: text,
+                    reasoning: reasoning,
+                    toolCalls: toolCalls,
+                    responseId: responseId,
+                    model: responseModel,
+                    finishReason: finishReason,
+                    promptTokens: promptTokens,
+                    completionTokens: completionTokens,
+                    totalTokens: totalTokens,
+                  ));
                 }
               } on FormatException {
                 // Ignore malformed/incomplete SSE JSON frames.
@@ -167,9 +203,7 @@ class NvidiaApiService {
             }
           }
 
-          if (!controller.isClosed) {
-            await controller.close();
-          }
+          if (!controller.isClosed) await controller.close();
         } on SocketException catch (error, stackTrace) {
           if (!controller.isClosed) {
             controller.addError(
@@ -189,9 +223,7 @@ class NvidiaApiService {
             );
           }
         } catch (error, stackTrace) {
-          if (!controller.isClosed) {
-            controller.addError(error, stackTrace);
-          }
+          if (!controller.isClosed) controller.addError(error, stackTrace);
         } finally {
           client?.close();
           client = null;
@@ -206,25 +238,16 @@ class NvidiaApiService {
     return controller.stream;
   }
 
-  NvidiaApiException _createApiException(
-    int statusCode,
-    String responseBody,
-  ) {
+  NvidiaApiException _createApiException(int statusCode, String responseBody) {
     String? apiMessage;
-
     try {
       final decoded = jsonDecode(responseBody);
       final error = decoded['error'];
-
       if (error is Map<String, dynamic>) {
         final message = error['message'];
-        if (message is String && message.isNotEmpty) {
-          apiMessage = message;
-        }
+        if (message is String && message.isNotEmpty) apiMessage = message;
       }
-    } catch (_) {
-      // Fall back to the HTTP status-specific message below.
-    }
+    } catch (_) {}
 
     final message = switch (statusCode) {
       400 => 'NVIDIA rejected the request. ${apiMessage ?? 'Check the request parameters.'}',
