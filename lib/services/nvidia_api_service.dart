@@ -191,16 +191,21 @@ class NvidiaApiService {
                   }
                 }
 
-                final toolCalls = streamedToolCalls.values
-                    .where((call) => call.id != null && call.name != null)
-                    .map((call) => ChatToolCall(
-                          id: call.id!,
-                          name: call.name!,
-                          arguments: call.arguments.isEmpty
-                              ? '{}'
-                              : call.arguments,
-                        ))
-                    .toList();
+                // Tool calls are streamed in fragments. Do not emit an
+                // apparently-complete call for every fragment; expose the
+                // assembled calls only when the model finishes the tool turn.
+                final toolCalls = finishReason == 'tool_calls'
+                    ? streamedToolCalls.values
+                        .where((call) => call.id != null && call.name != null)
+                        .map((call) => ChatToolCall(
+                              id: call.id!,
+                              name: call.name!,
+                              arguments: call.arguments.isEmpty
+                                  ? '{}'
+                                  : call.arguments,
+                            ))
+                        .toList()
+                    : const <ChatToolCall>[];
 
                 int? promptTokens;
                 int? completionTokens;
