@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_message.dart';
+import '../models/chat_response_format.dart';
 import '../models/chat_stream_event.dart';
 import '../models/chat_tool.dart';
 import '../models/chat_tool_call.dart';
@@ -41,6 +42,7 @@ class NvidiaApiService {
     bool clearSeed = false,
     List<ChatTool> tools = const [],
     dynamic toolChoice,
+    ChatResponseFormat? responseFormat,
   }) {
     http.Client? client;
     late final StreamController<ChatStreamEvent> controller;
@@ -82,6 +84,8 @@ class NvidiaApiService {
             if (tools.isNotEmpty)
               'tools': tools.map((tool) => tool.toApiJson()).toList(),
             if (toolChoice != null) 'tool_choice': toolChoice,
+            if (responseFormat != null)
+              'response_format': responseFormat.toApiJson(),
             'stream': true,
             'stream_options': {'include_usage': true},
           };
@@ -191,9 +195,6 @@ class NvidiaApiService {
                   }
                 }
 
-                // Tool calls are streamed in fragments. Do not emit an
-                // apparently-complete call for every fragment; expose the
-                // assembled calls only when the model finishes the tool turn.
                 final toolCalls = finishReason == 'tool_calls'
                     ? streamedToolCalls.values
                         .where((call) => call.id != null && call.name != null)
