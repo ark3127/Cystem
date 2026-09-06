@@ -154,7 +154,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           _SectionHeader(icon: Icons.auto_awesome_rounded, title: 'Model', subtitle: 'The intelligence behind CYSTEM'),
           _SettingsCard(children: [
-            Row(children: [Container(width: 42, height: 42, decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.12), shape: BoxShape.circle), child: const Icon(Icons.auto_awesome_rounded, color: AppTheme.primary)), const SizedBox(width: 13), const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Nemotron 3 Super 120B', style: TextStyle(fontWeight: FontWeight.w650, fontSize: 16)), SizedBox(height: 3), Text('NVIDIA NIM', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))]))]),
+            Row(children: [Container(width: 42, height: 42, decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.12), shape: BoxShape.circle), child: const Icon(Icons.auto_awesome_rounded, color: AppTheme.primary)), const SizedBox(width: 13), const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Nemotron 3 Super 120B', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)), SizedBox(height: 3), Text('NVIDIA NIM', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))]))]),
             const SizedBox(height: 20),
             const Text('Reasoning', style: TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
