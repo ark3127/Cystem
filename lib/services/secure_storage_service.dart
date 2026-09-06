@@ -2,7 +2,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class SecureStorageService {
   static const _apiKeyKey = 'nvidia_api_key';
-  static const _braveSearchApiKey = 'brave_search_api_key';
+  static const _tavilySearchApiKey = 'tavily_search_api_key';
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
@@ -23,20 +23,20 @@ class SecureStorageService {
     return apiKey != null && apiKey.isNotEmpty;
   }
 
-  Future<void> saveBraveSearchApiKey(String apiKey) async {
-    await _storage.write(key: _braveSearchApiKey, value: apiKey);
+  Future<void> saveTavilySearchApiKey(String apiKey) async {
+    await _storage.write(key: _tavilySearchApiKey, value: apiKey);
   }
 
-  Future<String?> getBraveSearchApiKey() async {
-    return _storage.read(key: _braveSearchApiKey);
+  Future<String?> getTavilySearchApiKey() async {
+    return _storage.read(key: _tavilySearchApiKey);
   }
 
-  Future<void> deleteBraveSearchApiKey() async {
-    await _storage.delete(key: _braveSearchApiKey);
+  Future<void> deleteTavilySearchApiKey() async {
+    await _storage.delete(key: _tavilySearchApiKey);
   }
 
-  Future<bool> hasBraveSearchApiKey() async {
-    final apiKey = await getBraveSearchApiKey();
+  Future<bool> hasTavilySearchApiKey() async {
+    final apiKey = await getTavilySearchApiKey();
     return apiKey != null && apiKey.isNotEmpty;
   }
 }
