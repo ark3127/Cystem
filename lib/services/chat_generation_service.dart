@@ -7,7 +7,7 @@ import 'chat_tool_executor.dart';
 import 'chat_tool_registry.dart';
 import 'nvidia_api_service.dart';
 
-/// Orchestrates Kimi K3 responses and model-requested tools.
+/// Orchestrates Nemotron responses and model-requested tools.
 class ChatGenerationService {
   ChatGenerationService({
     NvidiaApiService? apiService,
@@ -39,9 +39,7 @@ class ChatGenerationService {
     while (true) {
       token.throwIfCancelled();
       if (rounds++ >= maxToolRounds) {
-        throw const NvidiaApiException(
-          'The tool-call loop exceeded the safety limit.',
-        );
+        throw const NvidiaApiException('The tool-call loop exceeded the safety limit.');
       }
 
       final events = <ChatStreamEvent>[];
@@ -75,7 +73,7 @@ class ChatGenerationService {
         token.throwIfCancelled();
         final tool = _toolRegistry.find(call.name);
         if (tool == null) {
-          throw NvidiaApiException('Kimi requested an unavailable tool: ${call.name}.');
+          throw NvidiaApiException('Nemotron requested an unavailable tool: ${call.name}.');
         }
         try {
           _argumentValidator.validate(tool, call);
@@ -109,38 +107,22 @@ class ChatGenerationService {
     return byId.values.toList();
   }
 
-  String _assistantText(List<ChatStreamEvent> events) => events
-      .where((event) => event.hasText)
-      .map((event) => event.text!)
-      .join();
+  String _assistantText(List<ChatStreamEvent> events) => events.where((event) => event.hasText).map((event) => event.text!).join();
 
   String? _assistantReasoning(List<ChatStreamEvent> events) {
-    final value = events
-        .where((event) => event.hasReasoning)
-        .map((event) => event.reasoning!)
-        .join();
+    final value = events.where((event) => event.hasReasoning).map((event) => event.reasoning!).join();
     return value.isEmpty ? null : value;
   }
 
   ChatApiMetadata? _metadata(List<ChatStreamEvent> events) {
     ChatStreamEvent? latest;
     for (final event in events.reversed) {
-      if (event.responseId != null ||
-          event.model != null ||
-          event.finishReason != null ||
-          event.hasUsage) {
+      if (event.responseId != null || event.model != null || event.finishReason != null || event.hasUsage) {
         latest = event;
         break;
       }
     }
     if (latest == null) return null;
-    return ChatApiMetadata(
-      responseId: latest.responseId,
-      model: latest.model,
-      finishReason: latest.finishReason,
-      promptTokens: latest.promptTokens,
-      completionTokens: latest.completionTokens,
-      totalTokens: latest.totalTokens,
-    );
+    return ChatApiMetadata(responseId: latest.responseId, model: latest.model, finishReason: latest.finishReason, promptTokens: latest.promptTokens, completionTokens: latest.completionTokens, totalTokens: latest.totalTokens);
   }
 }
