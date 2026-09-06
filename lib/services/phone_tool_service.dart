@@ -72,13 +72,13 @@ class PhoneToolService implements ChatToolExecutor {
 
       switch (call.name) {
         case 'make_phone_call':
-          return _launchCall(args);
+          return await _launchCall(args);
         case 'compose_sms':
-          return _composeSms(args);
+          return await _composeSms(args);
         case 'open_url':
-          return _openUrl(args);
+          return await _openUrl(args);
         case 'open_maps':
-          return _openMaps(args);
+          return await _openMaps(args);
         default:
           return 'Unknown phone tool: ${call.name}';
       }
