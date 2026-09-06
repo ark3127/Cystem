@@ -1,39 +1,43 @@
 import '../models/chat_message.dart';
 import '../models/chat_stream_event.dart';
 import '../models/chat_tool_call.dart';
+import 'chat_cancellation_token.dart';
+import 'chat_tool_argument_validator.dart';
 import 'chat_tool_executor.dart';
 import 'chat_tool_registry.dart';
 import 'nvidia_api_service.dart';
 
 /// Orchestrates Kimi K3 responses and model-requested tools.
-///
-/// The API service remains responsible only for HTTP/SSE. This layer handles
-/// the multi-turn tool loop: assistant tool call -> local execution -> tool
-/// result -> next K3 request.
 class ChatGenerationService {
   ChatGenerationService({
     NvidiaApiService? apiService,
     ChatToolRegistry? toolRegistry,
     ChatToolExecutor? toolExecutor,
+    ChatToolArgumentValidator? argumentValidator,
   })  : _apiService = apiService ?? NvidiaApiService(),
         _toolRegistry = toolRegistry ?? ChatToolRegistry(),
-        _toolExecutor = toolExecutor ?? const UnavailableToolExecutor();
+        _toolExecutor = toolExecutor ?? const UnavailableToolExecutor(),
+        _argumentValidator = argumentValidator ?? const ChatToolArgumentValidator();
 
   static const int maxToolRounds = 8;
 
   final NvidiaApiService _apiService;
   final ChatToolRegistry _toolRegistry;
   final ChatToolExecutor _toolExecutor;
+  final ChatToolArgumentValidator _argumentValidator;
 
   ChatToolRegistry get toolRegistry => _toolRegistry;
 
   Stream<ChatStreamEvent> generate(
     List<ChatMessage> messages, {
     Future<void> Function(ChatMessage message)? onToolMessage,
+    ChatCancellationToken? cancellationToken,
   }) async* {
+    final token = cancellationToken ?? ChatCancellationToken();
     var rounds = 0;
 
     while (true) {
+      token.throwIfCancelled();
       if (rounds++ >= maxToolRounds) {
         throw const NvidiaApiException(
           'The tool-call loop exceeded the safety limit.',
@@ -44,11 +48,14 @@ class ChatGenerationService {
       await for (final event in _apiService.streamMessage(
         List<ChatMessage>.of(messages),
         tools: _toolRegistry.tools,
+        cancellationToken: token,
       )) {
+        token.throwIfCancelled();
         events.add(event);
         yield event;
       }
 
+      token.throwIfCancelled();
       final toolCalls = _completedToolCalls(events);
       if (toolCalls.isEmpty) return;
 
@@ -65,7 +72,19 @@ class ChatGenerationService {
       if (onToolMessage != null) await onToolMessage(assistantMessage);
 
       for (final call in toolCalls) {
+        token.throwIfCancelled();
+        final tool = _toolRegistry.find(call.name);
+        if (tool == null) {
+          throw NvidiaApiException('Kimi requested an unavailable tool: ${call.name}.');
+        }
+        try {
+          _argumentValidator.validate(tool, call);
+        } on FormatException catch (error) {
+          throw NvidiaApiException('Invalid JSON arguments for ${call.name}: $error');
+        }
+
         final result = await _toolExecutor.execute(call);
+        token.throwIfCancelled();
         final toolMessage = ChatMessage(
           id: '${DateTime.now().microsecondsSinceEpoch}_tool_result_${call.id}',
           content: result,
