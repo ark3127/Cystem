@@ -63,12 +63,9 @@ class NvidiaApiService {
 
           request.body = jsonEncode({
             'model': model,
-            'messages': messages.map((message) {
-              return {
-                'role': message.isUser ? 'user' : 'assistant',
-                'content': message.content,
-              };
-            }).toList(),
+            'messages': messages
+                .map((message) => message.toApiJson())
+                .toList(),
             'temperature': temperature.clamp(0.0, 1.0),
             'max_tokens': maxTokens.clamp(1, 65536),
             'reasoning_effort': reasoningEffort,
