@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../models/chat_completion_result.dart';
 import '../models/chat_message.dart';
 import '../models/chat_response_format.dart';
 import '../models/chat_stream_event.dart';
@@ -32,6 +33,171 @@ class NvidiaApiService {
 
   final SecureStorageService _secureStorageService = SecureStorageService();
   final AppSettingsService _settingsService = AppSettingsService();
+
+  Future<ChatCompletionResult> completeMessage(
+    List<ChatMessage> messages, {
+    String? reasoningEffort,
+    double? temperature,
+    int? maxTokens,
+    int? seed,
+    bool clearSeed = false,
+    List<ChatTool> tools = const [],
+    dynamic toolChoice,
+    ChatResponseFormat? responseFormat,
+  }) async {
+    final apiKey = await _secureStorageService.getApiKey();
+    if (apiKey == null || apiKey.isEmpty) {
+      throw const NvidiaApiException(
+        'No NVIDIA API key found. Add one in Settings.',
+      );
+    }
+
+    final savedSettings = await _settingsService.load();
+    final effectiveReasoningEffort =
+        reasoningEffort ?? savedSettings.reasoningEffort;
+    final effectiveTemperature = temperature ?? savedSettings.temperature;
+    final effectiveMaxTokens = maxTokens ?? savedSettings.maxTokens;
+    final effectiveSeed = clearSeed ? null : (seed ?? savedSettings.seed);
+
+    final apiMessages = <Map<String, dynamic>>[];
+    final systemPrompt = savedSettings.systemPrompt.trim();
+    if (systemPrompt.isNotEmpty) {
+      apiMessages.add({'role': 'system', 'content': systemPrompt});
+    }
+    apiMessages.addAll(messages.map((message) => message.toApiJson()));
+
+    final body = <String, dynamic>{
+      'model': model,
+      'messages': apiMessages,
+      'temperature': effectiveTemperature.clamp(0.0, 1.0),
+      'max_tokens': effectiveMaxTokens.clamp(1, 65536),
+      'reasoning_effort': effectiveReasoningEffort,
+      if (effectiveSeed != null) 'seed': effectiveSeed,
+      if (tools.isNotEmpty)
+        'tools': tools.map((tool) => tool.toApiJson()).toList(),
+      if (toolChoice != null) 'tool_choice': toolChoice,
+      if (responseFormat != null)
+        'response_format': responseFormat.toApiJson(),
+      'stream': false,
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse(_baseUrl),
+        headers: {
+          'Authorization': 'Bearer $apiKey',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(body),
+      );
+
+      if (response.statusCode != 200) {
+        throw _createApiException(response.statusCode, response.body);
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const NvidiaApiException(
+          'NVIDIA returned an invalid chat-completion response.',
+        );
+      }
+
+      final choices = decoded['choices'];
+      if (choices is! List || choices.isEmpty || choices.first is! Map) {
+        throw const NvidiaApiException(
+          'NVIDIA returned a chat-completion response without a choice.',
+        );
+      }
+
+      final choice = choices.first as Map;
+      final rawMessage = choice['message'];
+      if (rawMessage is! Map) {
+        throw const NvidiaApiException(
+          'NVIDIA returned a chat-completion without an assistant message.',
+        );
+      }
+
+      final toolCalls = <ChatToolCall>[];
+      final rawToolCalls = rawMessage['tool_calls'];
+      if (rawToolCalls is List) {
+        for (final rawCall in rawToolCalls) {
+          if (rawCall is! Map) continue;
+          final id = rawCall['id'];
+          final function = rawCall['function'];
+          if (id is! String || function is! Map) continue;
+          final name = function['name'];
+          final arguments = function['arguments'];
+          if (name is String && arguments is String) {
+            toolCalls.add(ChatToolCall(
+              id: id,
+              name: name,
+              arguments: arguments,
+            ));
+          }
+        }
+      }
+
+      final role = rawMessage['role'] == 'tool'
+          ? MessageRole.tool
+          : MessageRole.assistant;
+      final content = rawMessage['content'] is String
+          ? rawMessage['content'] as String
+          : '';
+      final reasoning = rawMessage['reasoning_content'] is String
+          ? rawMessage['reasoning_content'] as String
+          : null;
+
+      final message = ChatMessage(
+        id: 'api_${DateTime.now().microsecondsSinceEpoch}',
+        content: content,
+        role: role,
+        createdAt: DateTime.now(),
+        reasoningContent: reasoning,
+        toolCalls: toolCalls,
+      );
+
+      final usage = decoded['usage'];
+      int? promptTokens;
+      int? completionTokens;
+      int? totalTokens;
+      if (usage is Map) {
+        if (usage['prompt_tokens'] is num) {
+          promptTokens = (usage['prompt_tokens'] as num).toInt();
+        }
+        if (usage['completion_tokens'] is num) {
+          completionTokens = (usage['completion_tokens'] as num).toInt();
+        }
+        if (usage['total_tokens'] is num) {
+          totalTokens = (usage['total_tokens'] as num).toInt();
+        }
+      }
+
+      return ChatCompletionResult(
+        message: message,
+        responseId: decoded['id'] is String ? decoded['id'] as String : null,
+        model: decoded['model'] is String ? decoded['model'] as String : null,
+        finishReason: choice['finish_reason'] is String
+            ? choice['finish_reason'] as String
+            : null,
+        promptTokens: promptTokens,
+        completionTokens: completionTokens,
+        totalTokens: totalTokens,
+      );
+    } on SocketException catch (error) {
+      throw NvidiaApiException(
+        'Could not connect to NVIDIA NIM. Check your internet connection.',
+      );
+    } on http.ClientException catch (error) {
+      throw NvidiaApiException(
+        'Network error while connecting to NVIDIA NIM: ${error.message}',
+      );
+    } on FormatException {
+      throw const NvidiaApiException(
+        'NVIDIA returned invalid JSON for the chat completion.',
+      );
+    }
+  }
 
   Stream<ChatStreamEvent> streamMessage(
     List<ChatMessage> messages, {
