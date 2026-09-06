@@ -1,9 +1,6 @@
 import '../models/chat_tool.dart';
 
 /// Registry for tools exposed to Kimi K3.
-///
-/// Chunk 6 only establishes discovery/serialization. Actual phone-tool
-/// implementations and execution are added in Chunk 7.
 class ChatToolRegistry {
   final List<ChatTool> _tools = [];
 
