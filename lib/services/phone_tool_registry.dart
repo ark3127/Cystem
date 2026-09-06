@@ -2,7 +2,7 @@ import '../models/chat_tool.dart';
 import 'chat_tool_registry.dart';
 import 'phone_tool_service.dart';
 
-/// Builds the tool registry exposed to Kimi K3 for device actions.
+/// Builds the phone tool registry for device actions.
 class PhoneToolRegistry {
   PhoneToolRegistry._();
 
