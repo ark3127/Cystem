@@ -6,13 +6,14 @@ import '../models/chat_attachment.dart';
 import 'secure_storage_service.dart';
 
 /// Uses Gemini as Cystem's vision layer. Nemotron remains the main text model.
-/// The Interactions API is used because it is now Google's recommended API for
-/// new multimodal applications.
+/// The Interactions API is used for multimodal image understanding.
 class GeminiVisionService {
-  GeminiVisionService({http.Client Function()? clientFactory}) : _clientFactory = clientFactory ?? http.Client.new;
+  GeminiVisionService({http.Client Function()? clientFactory})
+      : _clientFactory = clientFactory ?? http.Client.new;
 
-  static const _model = 'gemini-3.6-flash';
-  static const _endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+  static const _model = 'gemini-3.8-flash';
+  static const _endpoint =
+      'https://generativelanguage.googleapis.com/v1beta/interactions';
 
   final http.Client Function() _clientFactory;
   final SecureStorageService _storage = SecureStorageService();
@@ -22,7 +23,9 @@ class GeminiVisionService {
 
     final apiKey = await _storage.getGeminiApiKey();
     if (apiKey == null || apiKey.trim().isEmpty) {
-      throw const GeminiVisionException('Gemini vision is not configured. Add a Gemini API key in Settings → Vision.');
+      throw const GeminiVisionException(
+        'Gemini vision is not configured. Add a Gemini API key in Settings → Vision.',
+      );
     }
 
     final input = <Map<String, dynamic>>[
@@ -63,13 +66,17 @@ Include everything that could matter: scene and objects, people, actions, spatia
           .timeout(const Duration(seconds: 90));
 
       if (response.statusCode != 200) {
-        throw GeminiVisionException('Gemini vision failed with HTTP ${response.statusCode}. ${_errorMessage(response.body)}');
+        throw GeminiVisionException(
+          'Gemini vision failed with HTTP ${response.statusCode}. ${_errorMessage(response.body)}',
+        );
       }
 
       final decoded = jsonDecode(response.body);
       final text = _extractText(decoded);
       if (text.trim().isEmpty) {
-        throw const GeminiVisionException('Gemini returned an empty visual analysis.');
+        throw const GeminiVisionException(
+          'Gemini returned an empty visual analysis.',
+        );
       }
       return text.trim();
     } finally {
@@ -87,7 +94,10 @@ Include everything that could matter: scene and objects, people, actions, spatia
     return steps
         .whereType<Map>()
         .where((step) => step['type'] == 'model_output')
-        .expand((step) => step['content'] is List ? (step['content'] as List) : const [])
+        .expand(
+          (step) =>
+              step['content'] is List ? (step['content'] as List) : const [],
+        )
         .whereType<Map>()
         .where((part) => part['type'] == 'text')
         .map((part) => part['text'])
@@ -100,7 +110,9 @@ Include everything that could matter: scene and objects, people, actions, spatia
       final decoded = jsonDecode(body);
       if (decoded is Map) {
         final error = decoded['error'];
-        if (error is Map && error['message'] is String) return error['message'] as String;
+        if (error is Map && error['message'] is String) {
+          return error['message'] as String;
+        }
         if (decoded['message'] is String) return decoded['message'] as String;
       }
     } catch (_) {}
