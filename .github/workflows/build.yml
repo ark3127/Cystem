@@ -50,11 +50,21 @@ jobs:
               if f'android:name="{permission}"' not in manifest
           )
           if permission_block:
-              manifest = re.sub(r'(?m)^\s*<application\\b', f'{permission_block}\n\n<application', manifest, count=1)
+              manifest = re.sub(
+                  r'(?m)^(\s*)<application',
+                  lambda match: f'{permission_block}\n\n{match.group(1)}<application',
+                  manifest,
+                  count=1,
+              )
 
           service = '    <service android:name="de.julianassmann.flutter_background.IsolateHolderService" android:exported="false" android:foregroundServiceType="dataSync" />'
           if 'de.julianassmann.flutter_background.IsolateHolderService' not in manifest:
-              manifest = re.sub(r'(<application\\b[^>]*>)', r'\1\n' + service, manifest, count=1)
+              manifest = re.sub(
+                  r'(<application[^>]*>)',
+                  lambda match: f'{match.group(1)}\n{service}',
+                  manifest,
+                  count=1,
+              )
 
           manifest_path.write_text(manifest)
           PY
