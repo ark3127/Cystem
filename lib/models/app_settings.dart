@@ -10,7 +10,7 @@ class AppSettings {
 
   const AppSettings({
     this.systemPrompt = defaultSystemPrompt,
-    this.reasoningEffort = 'max',
+    this.reasoningEffort = 'high',
     this.temperature = 1.0,
     this.maxTokens = 16384,
     this.seed,
@@ -47,23 +47,32 @@ class AppSettings {
     final temperature = (json['temperature'] as num?)?.toDouble();
     final maxTokens = (json['maxTokens'] as num?)?.toInt();
     final seed = (json['seed'] as num?)?.toInt();
-    final reasoningEffort = json['reasoningEffort'];
+    final rawReasoningEffort = json['reasoningEffort'];
     final systemPrompt = json['systemPrompt'];
+
+    var reasoningEffort = 'high';
+    if (rawReasoningEffort is String) {
+      reasoningEffort = switch (rawReasoningEffort) {
+        'none' => 'none',
+        'low' => 'low',
+        'high' => 'high',
+        // Migrate the old Kimi K3 setting to Nemotron's full reasoning mode.
+        'max' => 'high',
+        _ => 'high',
+      };
+    }
 
     return AppSettings(
       systemPrompt: systemPrompt is String
           ? systemPrompt
           : defaultSystemPrompt,
-      reasoningEffort: reasoningEffort is String &&
-              const ['low', 'high', 'max'].contains(reasoningEffort)
-          ? reasoningEffort
-          : 'max',
+      reasoningEffort: reasoningEffort,
       temperature: temperature == null
           ? 1.0
           : temperature.clamp(0.0, 1.0).toDouble(),
       maxTokens: maxTokens == null
           ? 16384
-          : maxTokens.clamp(1, 65536),
+          : maxTokens.clamp(1, 32768),
       seed: seed,
     );
   }
