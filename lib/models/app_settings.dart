@@ -7,11 +7,38 @@ class AppSettings {
   final double temperature;
   final int maxTokens;
   final int? seed;
+  final String themeMode;
+  final int accentColor;
 
-  const AppSettings({this.systemPrompt = defaultSystemPrompt, this.reasoningEffort = 'high', this.temperature = 1.0, this.maxTokens = 16384, this.seed});
+  const AppSettings({
+    this.systemPrompt = defaultSystemPrompt,
+    this.reasoningEffort = 'high',
+    this.temperature = 1.0,
+    this.maxTokens = 16384,
+    this.seed,
+    this.themeMode = 'dark',
+    this.accentColor = 0xFF9B7BFF,
+  });
 
-  AppSettings copyWith({String? systemPrompt, String? reasoningEffort, double? temperature, int? maxTokens, int? seed, bool clearSeed = false}) {
-    return AppSettings(systemPrompt: systemPrompt ?? this.systemPrompt, reasoningEffort: reasoningEffort ?? this.reasoningEffort, temperature: temperature ?? this.temperature, maxTokens: maxTokens ?? this.maxTokens, seed: clearSeed ? null : (seed ?? this.seed));
+  AppSettings copyWith({
+    String? systemPrompt,
+    String? reasoningEffort,
+    double? temperature,
+    int? maxTokens,
+    int? seed,
+    bool clearSeed = false,
+    String? themeMode,
+    int? accentColor,
+  }) {
+    return AppSettings(
+      systemPrompt: systemPrompt ?? this.systemPrompt,
+      reasoningEffort: reasoningEffort ?? this.reasoningEffort,
+      temperature: temperature ?? this.temperature,
+      maxTokens: maxTokens ?? this.maxTokens,
+      seed: clearSeed ? null : (seed ?? this.seed),
+      themeMode: themeMode ?? this.themeMode,
+      accentColor: accentColor ?? this.accentColor,
+    );
   }
 
   Map<String, dynamic> toJson() => {
@@ -20,6 +47,8 @@ class AppSettings {
         'temperature': temperature,
         'maxTokens': maxTokens,
         if (seed != null) 'seed': seed,
+        'themeMode': themeMode,
+        'accentColor': accentColor,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -28,6 +57,8 @@ class AppSettings {
     final seed = (json['seed'] as num?)?.toInt();
     final rawReasoningEffort = json['reasoningEffort'];
     final systemPrompt = json['systemPrompt'];
+    final rawTheme = json['themeMode'];
+    final rawAccent = json['accentColor'];
 
     var reasoningEffort = 'high';
     if (rawReasoningEffort is String) {
@@ -40,12 +71,17 @@ class AppSettings {
       };
     }
 
+    final themeMode = rawTheme is String && {'system', 'light', 'dark'}.contains(rawTheme) ? rawTheme : 'dark';
+    final accentColor = rawAccent is num ? rawAccent.toInt() : 0xFF9B7BFF;
+
     return AppSettings(
       systemPrompt: systemPrompt is String ? systemPrompt : defaultSystemPrompt,
       reasoningEffort: reasoningEffort,
       temperature: temperature == null ? 1.0 : temperature.clamp(0.0, 1.0).toDouble(),
       maxTokens: maxTokens == null ? 16384 : maxTokens.clamp(1, 32768),
       seed: seed,
+      themeMode: themeMode,
+      accentColor: accentColor,
     );
   }
 }
