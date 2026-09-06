@@ -284,6 +284,21 @@ class _ChatScreenState extends State<ChatScreen> {
         await _saveAllConversations();
         _scrollToBottom();
       },
+      onGeneratedImage: (image, backendContext) async {
+        if (cancellationToken.isCancelled || !mounted || _conversation?.id != conversation.id) return;
+        final index = conversation.messages.indexWhere((m) => m.id == assistantId);
+        if (index == -1) return;
+        final old = conversation.messages[index];
+        setState(() {
+          conversation.messages[index] = old.copyWith(
+            attachments: [...old.attachments, image],
+            backendContext: backendContext,
+          );
+          conversation.updatedAt = DateTime.now();
+        });
+        await _saveAllConversations();
+        _scrollToBottom();
+      },
     ).listen(
       (event) {
         if (event.hasText) generatedText += event.text!;
@@ -695,8 +710,8 @@ class _AttachmentPreview extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: Image.memory(decodeAttachmentImage(attachment), width: 78, height: 78, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(width: 78, height: 78, color: AppTheme.surfaceInteractive, child: const Icon(Icons.broken_image_outlined))),
+          borderRadius: BorderRadius.circular(12),
+          child: Image.memory(decodeAttachmentImage(attachment), width: 78, height: 78, fit: BoxFit.cover),
         ),
         Positioned(right: -7, top: -7, child: IconButton.filledTonal(visualDensity: VisualDensity.compact, iconSize: 16, tooltip: 'Remove image', onPressed: onRemove, icon: const Icon(Icons.close))),
       ],
@@ -794,9 +809,9 @@ class _MessageBubble extends StatelessWidget {
 
   Widget _buildImages(BuildContext context) {
     if (message.attachments.length == 1) {
-      return ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.memory(decodeAttachmentImage(message.attachments.first), height: 240, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined))));
+      return ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.memory(decodeAttachmentImage(message.attachments.first), height: 320, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined))));
     }
-    return SizedBox(height: 180, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: message.attachments.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) => ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.memory(decodeAttachmentImage(message.attachments[index]), width: 180, height: 180, fit: BoxFit.cover))));
+    return SizedBox(height: 220, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: message.attachments.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) => ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.memory(decodeAttachmentImage(message.attachments[index]), width: 220, height: 220, fit: BoxFit.contain))));
   }
 }
 
