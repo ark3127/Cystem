@@ -2,6 +2,8 @@ name: Build CYSTEM APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   build:
@@ -33,6 +35,12 @@ jobs:
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
 
       - name: Build APK
         run: flutter build apk --release
