@@ -58,6 +58,11 @@ class AppTheme {
       canvasColor: bg,
       dividerTheme: DividerThemeData(color: isDark ? const Color(0xFF252529) : const Color(0xFFE4E4E8), thickness: 1, space: 1),
       appBarTheme: AppBarTheme(backgroundColor: bg, foregroundColor: primaryText, elevation: 0, scrolledUnderElevation: 0, centerTitle: false, surfaceTintColor: Colors.transparent),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: accent,
+        constraints: const BoxConstraints.tightFor(width: 22, height: 22),
+        strokeWidth: 2.2,
+      ),
       textTheme: base.textTheme.copyWith(
         displayLarge: TextStyle(color: primaryText, fontWeight: FontWeight.w700, letterSpacing: -1.2),
         displayMedium: TextStyle(color: primaryText, fontWeight: FontWeight.w700, letterSpacing: -0.8),
