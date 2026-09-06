@@ -41,6 +41,15 @@ class ChatGenerationService {
 
   ChatToolRegistry get toolRegistry => _toolRegistry;
 
+  Future<GeminiImageGenerationResult> editImage({required ChatAttachment source, required String instruction}) async {
+    await _backgroundService.start();
+    try {
+      return await _imageGenerationService.editImage(source: source, instruction: instruction);
+    } finally {
+      await _backgroundService.stop();
+    }
+  }
+
   Stream<ChatStreamEvent> generate(
     List<ChatMessage> messages, {
     Future<void> Function(ChatMessage message)? onToolMessage,
@@ -67,11 +76,7 @@ class ChatGenerationService {
             ),
           );
         } else {
-          preparedMessages.add(
-            message.copyWith(
-              attachments: const [],
-            ),
-          );
+          preparedMessages.add(message.copyWith(attachments: const []));
         }
       }
 
@@ -87,7 +92,9 @@ class ChatGenerationService {
         final apiMessages = _messagesForNemotron(preparedMessages, imageRequest: wantsImage);
         await for (final event in _apiService.streamMessage(
           apiMessages,
-          tools: _toolRegistry.tools,
+          // Image generation is an explicit multimodal operation. Do not let
+          // Nemotron divert it into web search or another tool.
+          tools: wantsImage ? const [] : _toolRegistry.tools,
           cancellationToken: token,
         )) {
           token.throwIfCancelled();
@@ -103,9 +110,7 @@ class ChatGenerationService {
             if (nemoText.isNotEmpty) {
               final generated = await _imageGenerationService.generateImage(nemoText);
               token.throwIfCancelled();
-              if (onGeneratedImage != null) {
-                await onGeneratedImage(generated.image, generated.backendContext);
-              }
+              if (onGeneratedImage != null) await onGeneratedImage(generated.image, generated.backendContext);
             }
           }
           return;
@@ -126,9 +131,7 @@ class ChatGenerationService {
         for (final call in toolCalls) {
           token.throwIfCancelled();
           final tool = _toolRegistry.find(call.name);
-          if (tool == null) {
-            throw NvidiaApiException('Nemotron requested an unavailable tool: ${call.name}.');
-          }
+          if (tool == null) throw NvidiaApiException('Nemotron requested an unavailable tool: ${call.name}.');
           try {
             _argumentValidator.validate(tool, call);
           } on FormatException catch (error) {
@@ -137,12 +140,9 @@ class ChatGenerationService {
 
           if (onToolStart != null) await onToolStart(call);
           if (onToolMessage != null) {
-            final label = call.name == 'web_search'
-                ? '⏳ Searching the web…'
-                : '⏳ Running ${call.name}…';
             await onToolMessage(ChatMessage(
               id: '${DateTime.now().microsecondsSinceEpoch}_tool_status_${call.id}',
-              content: label,
+              content: call.name == 'web_search' ? '⏳ Searching the web…' : '⏳ Running ${call.name}…',
               role: MessageRole.tool,
               createdAt: DateTime.now(),
               toolCallId: call.id,
@@ -177,10 +177,7 @@ class ChatGenerationService {
     }
   }
 
-  List<ChatMessage> _messagesForNemotron(
-    List<ChatMessage> messages, {
-    required bool imageRequest,
-  }) {
+  List<ChatMessage> _messagesForNemotron(List<ChatMessage> messages, {required bool imageRequest}) {
     return messages.asMap().entries.map((entry) {
       final message = entry.value;
       final hiddenContext = message.backendContext?.trim();
@@ -189,7 +186,7 @@ class ChatGenerationService {
         content = '''$content\n\n[BACKGROUND IMAGE CONTEXT — Gemini]\n$hiddenContext\n[END BACKGROUND IMAGE CONTEXT]''';
       }
       if (imageRequest && entry.key == messages.length - 1 && message.isUser) {
-        content = '''$content\n\n[IMAGE GENERATION INSTRUCTION — BACKEND ONLY]\nThe user is requesting an image. Answer the user normally, but make your response a detailed, direct visual description/prompt suitable for a Gemini image-generation model. Do not claim that you generated or displayed the image yourself. The backend will send your response directly to Gemini after your text is shown to the user.\n[END IMAGE GENERATION INSTRUCTION]''';
+        content = '''$content\n\n[IMAGE GENERATION INSTRUCTION — BACKEND ONLY]\nThe user is requesting an image. Respond with a polished, detailed visual description/prompt for Gemini's image model. Do not search the web, call tools, provide an image URL, or claim that you generated the image. Your response is shown to the user first and then sent directly to Gemini to generate the image.\n[END IMAGE GENERATION INSTRUCTION]''';
       }
       return message.copyWith(content: content, attachments: const []);
     }).toList();
@@ -222,31 +219,22 @@ $analysis
   List<ChatToolCall> _completedToolCalls(List<ChatStreamEvent> events) {
     final byId = <String, ChatToolCall>{};
     for (final event in events) {
-      for (final call in event.toolCalls) {
-        byId[call.id] = call;
-      }
+      for (final call in event.toolCalls) byId[call.id] = call;
     }
     return byId.values.toList();
   }
 
-  String _assistantText(List<ChatStreamEvent> events) =>
-      events.where((event) => event.hasText).map((event) => event.text!).join();
+  String _assistantText(List<ChatStreamEvent> events) => events.where((event) => event.hasText).map((event) => event.text!).join();
 
   String? _assistantReasoning(List<ChatStreamEvent> events) {
-    final value = events
-        .where((event) => event.hasReasoning)
-        .map((event) => event.reasoning!)
-        .join();
+    final value = events.where((event) => event.hasReasoning).map((event) => event.reasoning!).join();
     return value.isEmpty ? null : value;
   }
 
   ChatApiMetadata? _metadata(List<ChatStreamEvent> events) {
     ChatStreamEvent? latest;
     for (final event in events.reversed) {
-      if (event.responseId != null ||
-          event.model != null ||
-          event.finishReason != null ||
-          event.hasUsage) {
+      if (event.responseId != null || event.model != null || event.finishReason != null || event.hasUsage) {
         latest = event;
         break;
       }
