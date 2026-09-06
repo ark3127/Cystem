@@ -93,7 +93,8 @@ class ChatMessage {
       content: content ?? this.content,
       role: role,
       createdAt: createdAt,
-      reasoningContent: reasoningContent ?? this.reasoningContent,
+      // Nemotron's chain-of-thought is backend-only. Do not persist or render it.
+      reasoningContent: null,
       toolCalls: toolCalls ?? this.toolCalls,
       toolCallId: toolCallId ?? this.toolCallId,
       toolName: toolName ?? this.toolName,
@@ -109,7 +110,6 @@ class ChatMessage {
       'content': content,
       'role': role.name,
       'createdAt': createdAt.toIso8601String(),
-      if (reasoningContent != null) 'reasoningContent': reasoningContent,
       if (toolCalls.isNotEmpty)
         'toolCalls': toolCalls.map((call) => call.toJson()).toList(),
       if (toolCallId != null) 'toolCallId': toolCallId,
@@ -131,7 +131,8 @@ class ChatMessage {
       content: json['content'] as String? ?? '',
       role: MessageRole.values.byName(json['role'] as String),
       createdAt: DateTime.parse(json['createdAt'] as String),
-      reasoningContent: json['reasoningContent'] as String?,
+      // Old conversations may contain reasoningContent; intentionally ignore it.
+      reasoningContent: null,
       toolCalls: rawToolCalls
           .map((call) => ChatToolCall.fromJson(
                 Map<String, dynamic>.from(call as Map),
@@ -167,8 +168,6 @@ class ChatMessage {
       return {
         'role': role.name,
         'content': content,
-        if (reasoningContent != null && isAssistant)
-          'reasoning_content': reasoningContent,
         if (toolCalls.isNotEmpty && isAssistant)
           'tool_calls': toolCalls.map((call) => call.toApiJson()).toList(),
       };
@@ -184,8 +183,6 @@ class ChatMessage {
           },
         ...attachments.map((attachment) => attachment.toApiContentPart()),
       ],
-      if (reasoningContent != null && isAssistant)
-        'reasoning_content': reasoningContent,
       if (toolCalls.isNotEmpty && isAssistant)
         'tool_calls': toolCalls.map((call) => call.toApiJson()).toList(),
     };
