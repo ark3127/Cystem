@@ -44,7 +44,7 @@ class WebSearchService implements ChatToolExecutor {
       if (decoded is! Map) return _serviceError('INVALID_ARGUMENTS', false, 'web_search requires a JSON object.');
       final query = decoded['query'];
       if (query is! String || query.trim().isEmpty) return _serviceError('INVALID_ARGUMENTS', false, 'web_search requires a non-empty query.');
-      return search(query.trim());
+      return await search(query.trim());
     } catch (error) {
       if (error is FormatException) return _serviceError('INVALID_ARGUMENTS', false, 'web_search received invalid JSON arguments.');
       return _serviceError('NETWORK_OR_PARSE_ERROR', true, 'Gemini web search is temporarily unavailable.');
@@ -171,7 +171,9 @@ $query''',
       }
 
       final unique = <String, _SourceImage>{};
-      for (final item in sources) unique[item.imageUrl] = item;
+      for (final item in sources) {
+        unique[item.imageUrl] = item;
+      }
 
       final attachments = <ChatAttachment>[];
       for (final source in unique.values.take(6)) {
