@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
 import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/chat_stream_event.dart';
@@ -21,11 +25,15 @@ class ChatGenerationService {
   })  : _apiService = apiService ?? NvidiaApiService(),
         _toolRegistry = toolRegistry ?? ChatToolRegistry(),
         _toolExecutor = toolExecutor ?? const UnavailableToolExecutor(),
-        _argumentValidator = argumentValidator ?? const ChatToolArgumentValidator(),
+        _argumentValidator =
+            argumentValidator ?? const ChatToolArgumentValidator(),
         _visionService = visionService ?? GeminiVisionService(),
-        _imageGenerationService = imageGenerationService ?? GeminiImageGenerationService();
+        _imageGenerationService =
+            imageGenerationService ?? GeminiImageGenerationService();
 
   static const int maxToolRounds = 8;
+  static const int maxWebImages = 4;
+  static const int maxWebImageBytes = 8 * 1024 * 1024;
 
   final NvidiaApiService _apiService;
   final ChatToolRegistry _toolRegistry;
@@ -50,11 +58,14 @@ class ChatGenerationService {
     List<ChatMessage> messages, {
     Future<void> Function(ChatMessage message)? onToolMessage,
     Future<void> Function(ChatToolCall call)? onToolStart,
-    Future<void> Function(ChatAttachment image, String? backendContext)? onGeneratedImage,
+    Future<void> Function(ChatAttachment image, String? backendContext)?
+        onGeneratedImage,
     ChatCancellationToken? cancellationToken,
   }) async* {
     final token = cancellationToken ?? ChatCancellationToken();
     final preparedMessages = <ChatMessage>[];
+    final wantsWebImages = _latestUserRequestsWebImage(messages);
+    final webImageUrls = <String>[];
 
     for (final message in messages) {
       token.throwIfCancelled();
@@ -119,8 +130,20 @@ class ChatGenerationService {
             final generated = await _imageGenerationService.generateImage(nemoText);
             token.throwIfCancelled();
             if (onGeneratedImage != null) {
-              await onGeneratedImage(generated.image, generated.backendContext);
+              await onGeneratedImage(
+                generated.image,
+                generated.backendContext,
+              );
             }
+          }
+        } else if (wantsWebImages && onGeneratedImage != null) {
+          // Web-search tool output stays hidden, but explicit image-search
+          // requests should still produce real, persistent chat images.
+          for (final url in webImageUrls.take(maxWebImages)) {
+            token.throwIfCancelled();
+            final attachment = await _downloadWebImage(url);
+            if (attachment == null) continue;
+            await onGeneratedImage(attachment, null);
           }
         }
         return;
@@ -163,10 +186,21 @@ class ChatGenerationService {
         } catch (error) {
           token.throwIfCancelled();
           result = call.name == 'web_search'
-              ? 'Web search failed: $error\n\nPlease try the search again with a different query.'
+              ? _serviceError(
+                  service: 'Tavily',
+                  operation: 'web_search',
+                  code: 'TOOL_EXECUTION_FAILED',
+                  retryable: false,
+                  details: error.toString(),
+                )
               : 'Tool execution failed: $error';
         }
         token.throwIfCancelled();
+
+        if (call.name == 'web_search' && wantsWebImages) {
+          webImageUrls.addAll(_extractWebImageUrls(result));
+        }
+
         preparedMessages.add(
           ChatMessage(
             id: '${DateTime.now().microsecondsSinceEpoch}_tool_result_${call.id}',
@@ -190,10 +224,12 @@ class ChatGenerationService {
       final hiddenContext = message.backendContext?.trim();
       var content = message.content;
       if (hiddenContext != null && hiddenContext.isNotEmpty) {
-        content = '$content\n\n[BACKGROUND IMAGE CONTEXT — Gemini]\n$hiddenContext\n[END BACKGROUND IMAGE CONTEXT]';
+        content =
+            '$content\n\n[BACKGROUND IMAGE CONTEXT — Gemini]\n$hiddenContext\n[END BACKGROUND IMAGE CONTEXT]';
       }
       if (imageRequest && entry.key == messages.length - 1 && message.isUser) {
-        content = '$content\n\n[IMAGE GENERATION INSTRUCTION — BACKEND ONLY]\nThe user is requesting an image. Respond with a polished, detailed visual description/prompt for Gemini\'s image model. Do not search the web, call tools, provide an image URL, or claim that you generated the image. Your response is shown to the user first and then sent directly to Gemini to generate the image.\n[END IMAGE GENERATION INSTRUCTION]';
+        content =
+            '$content\n\n[IMAGE GENERATION INSTRUCTION — BACKEND ONLY]\nThe user is requesting an image. Respond with a polished, detailed visual description/prompt for Gemini\'s image model. Do not search the web, call tools, provide an image URL, or claim that you generated the image. Your response is shown to the user first and then sent directly to Gemini to generate the image.\n[END IMAGE GENERATION INSTRUCTION]';
       }
       return message.copyWith(content: content, attachments: const []);
     }).toList();
@@ -209,6 +245,90 @@ class ChatGenerationService {
       ).hasMatch(message.content);
     }
     return false;
+  }
+
+  bool _latestUserRequestsWebImage(List<ChatMessage> messages) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final message = messages[i];
+      if (!message.isUser) continue;
+      final text = message.content.toLowerCase();
+      return RegExp(
+        r'\b(find|show|give|get|search|look up|fetch)\b[\s\S]{0,80}\b(image|images|picture|pictures|photo|photos|wallpaper|illustration)\b|\b(image|images|picture|pictures|photo|photos|wallpaper|illustration)\b[\s\S]{0,50}\b(from|on|over|using)\b[\s\S]{0,30}\b(internet|web|online)\b|\b(image|images|picture|pictures|photo|photos)\b[\s\S]{0,35}\b(search)\b',
+        caseSensitive: false,
+      ).hasMatch(text);
+    }
+    return false;
+  }
+
+  List<String> _extractWebImageUrls(String result) {
+    final urls = <String>[];
+    final pattern = RegExp(r'!\[[^\]]*\]\((https?://[^)\s]+)\)');
+    for (final match in pattern.allMatches(result)) {
+      final url = match.group(1);
+      if (url != null && !urls.contains(url)) urls.add(url);
+    }
+    return urls;
+  }
+
+  Future<ChatAttachment?> _downloadWebImage(String url) async {
+    try {
+      final uri = Uri.tryParse(url);
+      if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+        return null;
+      }
+      final response = await http
+          .get(uri, headers: const {'Accept': 'image/*'})
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      if (response.bodyBytes.isEmpty ||
+          response.bodyBytes.length > maxWebImageBytes) {
+        return null;
+      }
+
+      final headerType = response.headers['content-type']?.split(';').first;
+      final mimeType = headerType != null && headerType.startsWith('image/')
+          ? headerType
+          : _mimeTypeFromUrl(url);
+      if (mimeType == null) return null;
+
+      final extension = mimeType.split('/').last;
+      return ChatAttachment(
+        id: '${DateTime.now().microsecondsSinceEpoch}_web_image',
+        type: ChatAttachmentType.image,
+        mimeType: mimeType,
+        data: base64Encode(response.bodyBytes),
+        fileName: 'cystem-web-image.$extension',
+        sourceUrl: url,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _mimeTypeFromUrl(String url) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+    if (path.endsWith('.png')) return 'image/png';
+    if (path.endsWith('.webp')) return 'image/webp';
+    if (path.endsWith('.gif')) return 'image/gif';
+    return null;
+  }
+
+  String _serviceError({
+    required String service,
+    required String operation,
+    required String code,
+    required bool retryable,
+    required String details,
+    int? httpStatus,
+  }) {
+    return '[SERVICE ERROR]\n'
+        'Service: $service\n'
+        'Operation: $operation\n'
+        'Error: $code\n'
+        'HTTP status: ${httpStatus ?? 'unknown'}\n'
+        'Retryable: $retryable\n'
+        'Details: $details';
   }
 
   String _withVisionContext(String userText, String analysis) {
