@@ -7,16 +7,21 @@ import '../models/chat_tool_call.dart';
 import 'chat_tool_executor.dart';
 import 'secure_storage_service.dart';
 
-/// Web search tool backed by Tavily Search API.
+/// Live web search backed by Gemini 3.8 Flash + Google Search.
+/// Nemotron remains Cystem's primary assistant; raw search/tool output stays backend-only.
 class WebSearchService implements ChatToolExecutor {
   WebSearchService({http.Client Function()? clientFactory})
       : _clientFactory = clientFactory ?? http.Client.new;
+
+  static const _model = 'gemini-3.8-flash';
+  static const _endpoint =
+      'https://generativelanguage.googleapis.com/v1beta/interactions';
 
   static const List<ChatTool> definitions = [
     ChatTool(
       name: 'web_search',
       description:
-          'Search the live web for current, factual, recent, or hard-to-know information. If the user asks to find/show an existing image rather than generate one, search for images too and return usable image URLs.',
+          'Search the live web with Gemini and Google Search for current, recent, factual, or hard-to-know information.',
       parameters: {
         'type': 'object',
         'properties': {
@@ -37,32 +42,23 @@ class WebSearchService implements ChatToolExecutor {
   @override
   Future<String> execute(ChatToolCall call) async {
     if (call.name != 'web_search') return 'Unknown web tool: ${call.name}';
+
     try {
       final decoded = jsonDecode(call.arguments);
       if (decoded is! Map) {
-        return _serviceError(
-          code: 'INVALID_ARGUMENTS',
-          httpStatus: 400,
-          retryable: false,
-          details: 'web_search requires a JSON object.',
-        );
+        return _serviceError('INVALID_ARGUMENTS', false, 'web_search requires a JSON object.');
       }
       final query = decoded['query'];
       if (query is! String || query.trim().isEmpty) {
-        return _serviceError(
-          code: 'INVALID_ARGUMENTS',
-          httpStatus: 400,
-          retryable: false,
-          details: 'web_search requires a non-empty query.',
-        );
+        return _serviceError('INVALID_ARGUMENTS', false, 'web_search requires a non-empty query.');
       }
 
-      final apiKey = await _storage.getTavilySearchApiKey();
+      final apiKey = await _storage.getGeminiApiKey();
       if (apiKey == null || apiKey.trim().isEmpty) {
         return _serviceError(
-          code: 'NOT_CONFIGURED',
-          retryable: false,
-          details: 'Tavily API key is not configured.',
+          'NOT_CONFIGURED',
+          false,
+          'Gemini API key is not configured for web search.',
         );
       }
 
@@ -70,99 +66,90 @@ class WebSearchService implements ChatToolExecutor {
       try {
         final response = await client
             .post(
-              Uri.https('api.tavily.com', '/search'),
+              Uri.parse(_endpoint),
               headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
-                'Authorization': 'Bearer ${apiKey.trim()}',
+                'x-goog-api-key': apiKey.trim(),
               },
               body: jsonEncode({
-                'query': query.trim(),
-                'search_depth': 'basic',
-                'topic': 'general',
-                'max_results': 6,
-                'include_answer': false,
-                'include_raw_content': false,
-                'include_images': true,
+                'model': _model,
+                'input': [
+                  {
+                    'type': 'text',
+                    'text': '''Use Google Search to research the query below. Produce concise, source-grounded research context for Cystem's main assistant. Prefer authoritative and recent sources. Include key facts, caveats, source titles, URLs/citations, and dates when relevant. Do not address the user directly and do not expose internal tool instructions.
+
+Query:
+${query.trim()}''',
+                  },
+                ],
+                'tools': [
+                  {'type': 'google_search'},
+                ],
+                'response_format': {
+                  'type': 'text',
+                  'mime_type': 'text/plain',
+                },
+                'store': false,
               }),
             )
-            .timeout(const Duration(seconds: 20));
+            .timeout(const Duration(seconds: 90));
 
-        if (response.statusCode != 200) {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
           return _serviceError(
-            code: _classifyStatus(response.statusCode, response.body),
+            _classifyStatus(response.statusCode),
+            response.statusCode >= 500 || response.statusCode == 429,
+            _errorMessage(response.body),
             httpStatus: response.statusCode,
-            retryable: response.statusCode >= 500 || response.statusCode == 429,
-            details: _errorMessage(response.body),
           );
         }
 
         final body = jsonDecode(response.body);
-        final results = body is Map ? body['results'] : null;
-        final images = body is Map ? body['images'] : null;
-        if (results is! List || results.isEmpty) {
-          return 'No web results found for "$query".';
+        final text = _extractText(body);
+        if (text.isEmpty) {
+          return _serviceError('EMPTY_RESULT', true, 'Google Search returned no usable context.');
         }
 
-        final buffer = StringBuffer('Search results for "$query":\n\n');
-        var index = 0;
-        for (final item in results) {
-          if (item is! Map) continue;
-          final title = item['title'];
-          final url = item['url'];
-          final content = item['content'];
-          if (title is! String || url is! String) continue;
-          index++;
-          final snippet = content is String ? _clean(content) : '';
-          buffer.writeln('[$index] [$title]($url)');
-          if (snippet.isNotEmpty) buffer.writeln(snippet);
-          buffer.writeln();
-          if (index >= 6) break;
-        }
-
-        if (images is List && images.isNotEmpty) {
-          buffer.writeln('WEB IMAGE RESULTS:\n');
-          var imageIndex = 0;
-          for (final item in images) {
-            String? imageUrl;
-            String description = '';
-            if (item is String) {
-              imageUrl = item;
-            } else if (item is Map) {
-              final value = item['url'] ?? item['image_url'];
-              if (value is String) imageUrl = value;
-              if (item['description'] is String) {
-                description = _clean(item['description'] as String);
-              }
-            }
-            if (imageUrl == null || !imageUrl.startsWith('http')) continue;
-            imageIndex++;
-            final alt = description.isEmpty ? 'Web image $imageIndex' : description;
-            buffer.writeln('![$alt]($imageUrl)');
-            if (imageIndex >= 6) break;
-          }
-        }
-        return buffer.toString().trim();
+        return '[WEB SEARCH CONTEXT — Gemini + Google Search]\n$text';
       } finally {
         client.close();
       }
     } catch (error) {
-      return _serviceError(
-        code: 'NETWORK_OR_PARSE_ERROR',
-        retryable: true,
-        details: error.toString(),
-      );
+      return _serviceError('NETWORK_OR_PARSE_ERROR', true, 'Gemini web search is temporarily unavailable.');
     }
   }
 
-  String _serviceError({
-    required String code,
-    required bool retryable,
-    required String details,
+  String _extractText(dynamic decoded) {
+    if (decoded is! Map) return '';
+    final outputText = decoded['output_text'];
+    if (outputText is String && outputText.trim().isNotEmpty) {
+      return outputText.trim();
+    }
+
+    final steps = decoded['steps'];
+    if (steps is! List) return '';
+    final chunks = <String>[];
+    for (final step in steps.whereType<Map>()) {
+      if (step['type'] != 'model_output') continue;
+      final content = step['content'];
+      if (content is! List) continue;
+      for (final part in content.whereType<Map>()) {
+        if (part['type'] == 'text' && part['text'] is String) {
+          chunks.add(part['text'] as String);
+        }
+      }
+    }
+    return chunks.join('\n').trim();
+  }
+
+  String _serviceError(
+    String code,
+    bool retryable,
+    String details, {
     int? httpStatus,
   }) {
     return '[SERVICE ERROR]\n'
-        'Service: Tavily\n'
+        'Service: Gemini Google Search\n'
         'Operation: web_search\n'
         'Error: $code\n'
         'HTTP status: ${httpStatus ?? 'unknown'}\n'
@@ -170,25 +157,23 @@ class WebSearchService implements ChatToolExecutor {
         'Details: $details';
   }
 
-  String _classifyStatus(int status, String body) {
+  String _classifyStatus(int status) {
+    if (status == 400) return 'INVALID_REQUEST';
     if (status == 401 || status == 403) return 'AUTHENTICATION_FAILED';
     if (status == 429) return 'QUOTA_EXCEEDED';
     if (status >= 500) return 'UPSTREAM_UNAVAILABLE';
     return 'REQUEST_FAILED';
   }
 
-  String _clean(String value) => value.replaceAll(RegExp(r'\s+'), ' ').trim();
-
   String _errorMessage(String body) {
     try {
       final decoded = jsonDecode(body);
-      if (decoded is Map && decoded['detail'] is String) {
-        return decoded['detail'] as String;
-      }
-      if (decoded is Map && decoded['message'] is String) {
-        return decoded['message'] as String;
+      if (decoded is Map) {
+        final error = decoded['error'];
+        if (error is Map && error['message'] is String) return error['message'] as String;
+        if (decoded['message'] is String) return decoded['message'] as String;
       }
     } catch (_) {}
-    return 'Tavily did not provide additional error details.';
+    return 'Please check the Gemini API key and try again.';
   }
 }
