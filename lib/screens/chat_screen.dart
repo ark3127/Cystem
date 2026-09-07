@@ -17,9 +17,12 @@ import '../services/chat_storage_service.dart';
 import '../services/image_attachment_service.dart';
 import '../services/image_gallery_service.dart';
 import '../widgets/chat_drawer.dart';
-import '../widgets/message_actions.dart';
 import 'settings_screen.dart';
 
+/// Modern phone-first CYSTEM chat surface.
+///
+/// Specialist/tool output and model reasoning are deliberately not rendered.
+/// They remain backend data where required for continuity and diagnostics.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -30,7 +33,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
-  final _storageService = ChatStorageService();
+  final _storage = ChatStorageService();
   final _imageService = ImageAttachmentService();
   final _galleryService = ImageGalleryService();
   final _generationService = ChatGenerationService(
@@ -39,64 +42,55 @@ class _ChatScreenState extends State<ChatScreen> {
   );
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  StreamSubscription<ChatStreamEvent>? _generationSubscription;
-  ChatCancellationToken? _generationCancellationToken;
+  StreamSubscription<ChatStreamEvent>? _subscription;
+  ChatCancellationToken? _cancelToken;
   List<ChatConversation> _conversations = [];
   ChatConversation? _conversation;
   List<ChatAttachment> _pendingAttachments = [];
-  bool _isGenerating = false;
-  bool _isLoading = true;
-  bool _userIsNearBottom = true;
+  bool _loading = true;
+  bool _generating = false;
+  bool _nearBottom = true;
 
-  List<ChatMessage> get _messages => _conversation?.messages ?? [];
+  List<ChatMessage> get _messages => _conversation?.messages ?? const [];
+  bool get _canSend =>
+      _messageController.text.trim().isNotEmpty || _pendingAttachments.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
-    _messageController.addListener(_onInputChanged);
-    _scrollController.addListener(_onScroll);
-    _loadConversations();
+    _messageController.addListener(_refreshInput);
+    _scrollController.addListener(_handleScroll);
+    _load();
   }
 
-  void _onInputChanged() {
-    if (mounted) {
-      setState(() {});
-    }
+  void _refreshInput() {
+    if (mounted) setState(() {});
   }
 
-  void _onScroll() {
+  void _handleScroll() {
     if (!_scrollController.hasClients) return;
-    _userIsNearBottom =
-        _scrollController.position.maxScrollExtent -
-                _scrollController.position.pixels <
-            180;
-    if (mounted) {
-      setState(() {});
-    }
+    _nearBottom =
+        _scrollController.position.maxScrollExtent - _scrollController.position.pixels < 180;
   }
 
-  Future<void> _loadConversations() async {
-    final conversations = await _storageService.loadConversations();
-    _sortConversations(conversations);
-
+  Future<void> _load() async {
+    final conversations = await _storage.loadConversations();
+    _sort(conversations);
     if (conversations.isEmpty) {
-      final conversation = _createConversation();
-      conversations.add(conversation);
-      _conversation = conversation;
-      await _storageService.saveConversations(conversations);
-    } else {
-      _conversation = conversations.first;
+      final chat = _newConversation();
+      conversations.add(chat);
+      await _storage.saveConversations(conversations);
     }
-
     if (!mounted) return;
     setState(() {
       _conversations = conversations;
-      _isLoading = false;
+      _conversation = conversations.first;
+      _loading = false;
     });
     _scrollToBottom(jump: true);
   }
 
-  ChatConversation _createConversation() {
+  ChatConversation _newConversation() {
     final now = DateTime.now();
     return ChatConversation(
       id: now.microsecondsSinceEpoch.toString(),
@@ -106,137 +100,102 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _sortConversations(List<ChatConversation> conversations) {
-    conversations.sort((a, b) {
-      if (a.isPinned != b.isPinned) {
-        return a.isPinned ? -1 : 1;
-      }
+  void _sort(List<ChatConversation> items) {
+    items.sort((a, b) {
+      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
       return b.updatedAt.compareTo(a.updatedAt);
     });
   }
 
-  Future<void> _saveAllConversations() async {
-    _sortConversations(_conversations);
-    await _storageService.saveConversations(_conversations);
+  Future<void> _save() async {
+    _sort(_conversations);
+    await _storage.saveConversations(_conversations);
   }
 
-  Future<void> _createNewChat() async {
-    if (_isGenerating) return;
-    final conversation = _createConversation();
+  Future<void> _newChat() async {
+    if (_generating) return;
+    final chat = _newConversation();
     setState(() {
-      _conversations.add(conversation);
-      _conversation = conversation;
+      _conversations.add(chat);
+      _conversation = chat;
       _pendingAttachments = [];
-      _sortConversations(_conversations);
     });
-    await _saveAllConversations();
-    if (mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
+    await _save();
     _scrollToBottom(jump: true);
   }
 
-  Future<void> _selectConversation(ChatConversation conversation) async {
-    if (_isGenerating) return;
+  Future<void> _selectChat(ChatConversation chat) async {
+    if (_generating) return;
     setState(() {
-      _conversation = conversation;
+      _conversation = chat;
       _pendingAttachments = [];
     });
-    if (mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
+    if (mounted && Navigator.of(context).canPop()) Navigator.pop(context);
     _scrollToBottom(jump: true);
   }
 
-  Future<void> _togglePin(ChatConversation conversation) async {
-    if (_isGenerating) return;
+  Future<void> _pinChat(ChatConversation chat) async {
+    if (_generating) return;
     setState(() {
-      conversation.isPinned = !conversation.isPinned;
-      conversation.updatedAt = DateTime.now();
-      _sortConversations(_conversations);
+      chat.isPinned = !chat.isPinned;
+      chat.updatedAt = DateTime.now();
     });
-    await _saveAllConversations();
+    await _save();
   }
 
-  Future<void> _renameConversation(ChatConversation conversation) async {
-    if (_isGenerating) return;
-    final controller = TextEditingController(text: conversation.title);
-    final title = await showDialog<String>(
+  Future<void> _renameChat(ChatConversation chat) async {
+    if (_generating) return;
+    final controller = TextEditingController(text: chat.title);
+    final value = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text('Rename chat'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 100,
-          decoration: const InputDecoration(hintText: 'Chat name'),
-        ),
+        content: TextField(controller: controller, autofocus: true, maxLength: 80),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Save'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
         ],
       ),
     );
     controller.dispose();
-
-    if (title == null || title.isEmpty || !mounted) return;
+    if (value == null || value.isEmpty || !mounted) return;
     setState(() {
-      conversation.title = title;
-      conversation.updatedAt = DateTime.now();
+      chat.title = value;
+      chat.updatedAt = DateTime.now();
     });
-    await _saveAllConversations();
+    await _save();
   }
 
-  Future<void> _deleteConversation(ChatConversation conversation) async {
-    if (_isGenerating) return;
+  Future<void> _deleteChat(ChatConversation chat) async {
+    if (_generating) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text('Delete chat?'),
-        content: Text('Delete "${conversation.title}"? This cannot be undone.'),
+        content: Text('Delete "${chat.title}"? This cannot be undone.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
     setState(() {
-      _conversations.removeWhere((item) => item.id == conversation.id);
-      if (_conversation?.id == conversation.id) {
-        if (_conversations.isEmpty) {
-          _conversation = _createConversation();
-          _conversations.add(_conversation!);
-        } else {
-          _sortConversations(_conversations);
-          _conversation = _conversations.first;
-        }
-      }
-      _pendingAttachments = [];
+      _conversations.removeWhere((item) => item.id == chat.id);
+      if (_conversations.isEmpty) _conversations.add(_newConversation());
+      _sort(_conversations);
+      _conversation = _conversations.first;
     });
-    await _saveAllConversations();
+    await _save();
     _scrollToBottom(jump: true);
   }
 
   Future<void> _pickImage() async {
-    if (_isGenerating) return;
+    if (_generating) return;
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
+      builder: (_) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 18),
           child: Column(
@@ -257,75 +216,48 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
-
     if (source == null || !mounted) return;
     try {
-      final attachment = await _imageService.pickImage(source);
-      if (attachment != null && mounted) {
-        setState(() {
-          _pendingAttachments = [..._pendingAttachments, attachment];
-        });
+      final image = await _imageService.pickImage(source);
+      if (image != null && mounted) {
+        setState(() => _pendingAttachments = [..._pendingAttachments, image]);
       }
     } catch (error) {
-      if (mounted) {
-        _showSnack('Could not add image: $error');
-      }
+      _snack('Could not add image.');
     }
   }
 
-  void _removePendingAttachment(String id) {
-    setState(() {
-      _pendingAttachments =
-          _pendingAttachments.where((item) => item.id != id).toList();
-    });
-  }
-
-  Future<void> _sendMessage() async {
+  Future<void> _send() async {
+    if (!_canSend || _generating || _conversation == null) return;
     final text = _messageController.text.trim();
-    if ((text.isEmpty && _pendingAttachments.isEmpty) ||
-        _isGenerating ||
-        _conversation == null) {
-      return;
-    }
-    await _sendUserText(text, attachments: List.of(_pendingAttachments));
-  }
-
-  Future<void> _sendUserText(
-    String text, {
-    List<ChatAttachment> attachments = const [],
-  }) async {
-    if (_conversation == null || _isGenerating) return;
-
+    final attachments = List<ChatAttachment>.of(_pendingAttachments);
     final now = DateTime.now();
-    final userMessage = ChatMessage(
+    final message = ChatMessage(
       id: now.microsecondsSinceEpoch.toString(),
       content: text,
       role: MessageRole.user,
       createdAt: now,
       attachments: attachments,
     );
-
     setState(() {
-      _conversation!.messages.add(userMessage);
-      _conversation!.updatedAt = DateTime.now();
+      _conversation!.messages.add(message);
+      _conversation!.updatedAt = now;
       _pendingAttachments = [];
       if (_conversation!.title == 'New Chat') {
-        final source = text.isNotEmpty ? text : 'Image message';
-        _conversation!.title =
-            source.length > 40 ? '${source.substring(0, 40)}...' : source;
+        final title = text.isEmpty ? 'Image message' : text;
+        _conversation!.title = title.length > 42 ? '${title.substring(0, 42)}…' : title;
       }
     });
-
     _messageController.clear();
-    await _saveAllConversations();
+    await _save();
     _scrollToBottom(jump: true);
-    await _generateResponse();
+    await _generate();
   }
 
-  Future<void> _generateResponse() async {
-    if (_conversation == null || _isGenerating) return;
+  Future<void> _generate() async {
+    final conversation = _conversation;
+    if (conversation == null || _generating) return;
 
-    final conversation = _conversation!;
     final assistantId = '${DateTime.now().microsecondsSinceEpoch}_assistant';
     final assistant = ChatMessage(
       id: assistantId,
@@ -333,405 +265,224 @@ class _ChatScreenState extends State<ChatScreen> {
       role: MessageRole.assistant,
       createdAt: DateTime.now(),
     );
-    final cancellationToken = ChatCancellationToken();
-
+    final token = ChatCancellationToken();
     setState(() {
       conversation.messages.add(assistant);
       conversation.updatedAt = DateTime.now();
-      _isGenerating = true;
-      _generationCancellationToken = cancellationToken;
-      _userIsNearBottom = true;
+      _generating = true;
+      _cancelToken = token;
+      _nearBottom = true;
     });
+    await _save();
     _scrollToBottom(jump: true);
-    await _saveAllConversations();
 
-    final messagesForApi =
-        conversation.messages.where((m) => m.id != assistantId).toList();
+    final messages = conversation.messages.where((m) => m.id != assistantId).toList();
     var generatedText = '';
-    var generatedReasoning = '';
 
-    _generationSubscription = _generationService
-        .generate(
-          messagesForApi,
-          cancellationToken: cancellationToken,
-          onToolMessage: (message) async {
-            if (cancellationToken.isCancelled ||
-                !mounted ||
-                _conversation?.id != conversation.id) {
-              return;
-            }
-            final index = conversation.messages
-                .indexWhere((m) => m.id == assistantId);
-            if (index == -1) return;
-            setState(() {
-              conversation.messages.insert(index, message);
-              conversation.updatedAt = DateTime.now();
-            });
-            await _saveAllConversations();
-            _scrollToBottom();
-          },
-          onGeneratedImage: (image, backendContext) async {
-            if (cancellationToken.isCancelled ||
-                !mounted ||
-                _conversation?.id != conversation.id) {
-              return;
-            }
-            final index = conversation.messages
-                .indexWhere((m) => m.id == assistantId);
-            if (index == -1) return;
-            final old = conversation.messages[index];
-            setState(() {
-              conversation.messages[index] = old.copyWith(
-                attachments: [...old.attachments, image],
-                backendContext: backendContext,
-              );
-              conversation.updatedAt = DateTime.now();
-            });
-            await _saveAllConversations();
-            _scrollToBottom();
-          },
-        )
-        .listen(
-          (event) {
-            if (event.hasText) generatedText += event.text!;
-            if (event.hasReasoning) generatedReasoning += event.reasoning!;
-            if (!mounted ||
-                _conversation?.id != conversation.id ||
-                cancellationToken.isCancelled) {
-              return;
-            }
-
-            final index = conversation.messages
-                .indexWhere((m) => m.id == assistantId);
-            if (index == -1) return;
-            final old = conversation.messages[index];
-            final metadata =
-                event.responseId != null ||
-                        event.model != null ||
-                        event.finishReason != null ||
-                        event.hasUsage
-                    ? ChatApiMetadata(
-                        responseId:
-                            event.responseId ?? old.apiMetadata?.responseId,
-                        model: event.model ?? old.apiMetadata?.model,
-                        finishReason:
-                            event.finishReason ?? old.apiMetadata?.finishReason,
-                        promptTokens:
-                            event.promptTokens ?? old.apiMetadata?.promptTokens,
-                        completionTokens: event.completionTokens ??
-                            old.apiMetadata?.completionTokens,
-                        totalTokens:
-                            event.totalTokens ?? old.apiMetadata?.totalTokens,
-                      )
-                    : old.apiMetadata;
-
-            setState(() {
-              conversation.messages[index] = old.copyWith(
-                content: generatedText,
-                reasoningContent: generatedReasoning.isEmpty
-                    ? old.reasoningContent
-                    : generatedReasoning,
-                apiMetadata: metadata,
-              );
-              conversation.updatedAt = DateTime.now();
-            });
-            _scrollToBottom();
-          },
-          onError: (Object error) async {
-            if (!mounted || _conversation?.id != conversation.id) return;
-            final cancelled = cancellationToken.isCancelled ||
-                error is ChatGenerationCancelledException;
-            setState(() {
-              final index = conversation.messages
-                  .indexWhere((m) => m.id == assistantId);
-              if (index != -1 &&
-                  conversation.messages[index].content.isEmpty &&
-                  conversation.messages[index].reasoningContent == null) {
-                conversation.messages.removeAt(index);
-              }
-              _isGenerating = false;
-              if (identical(_generationCancellationToken, cancellationToken)) {
-                _generationCancellationToken = null;
-              }
-            });
-            await _saveAllConversations();
-            if (!cancelled) {
-              _showSnack('Something went wrong: $error');
-            }
-            _generationSubscription = null;
-          },
-          onDone: () async {
-            if (!mounted || _conversation?.id != conversation.id) return;
-            setState(() {
-              _isGenerating = false;
-              if (identical(_generationCancellationToken, cancellationToken)) {
-                _generationCancellationToken = null;
-              }
-              conversation.updatedAt = DateTime.now();
-            });
-            await _saveAllConversations();
-            _generationSubscription = null;
-            _scrollToBottom();
-          },
-          cancelOnError: true,
-        );
+    _subscription = _generationService.generate(
+      messages,
+      cancellationToken: token,
+      onToolMessage: (_) async {},
+      onGeneratedImage: (image, backendContext) async {
+        if (!mounted || token.isCancelled || _conversation?.id != conversation.id) return;
+        final index = conversation.messages.indexWhere((m) => m.id == assistantId);
+        if (index == -1) return;
+        final old = conversation.messages[index];
+        setState(() {
+          conversation.messages[index] = old.copyWith(
+            attachments: [...old.attachments, image],
+            backendContext: backendContext,
+          );
+          conversation.updatedAt = DateTime.now();
+        });
+        await _save();
+        _scrollToBottom();
+      },
+    ).listen(
+      (event) {
+        if (event.hasText) generatedText += event.text!;
+        if (!mounted || token.isCancelled || _conversation?.id != conversation.id) return;
+        final index = conversation.messages.indexWhere((m) => m.id == assistantId);
+        if (index == -1) return;
+        final old = conversation.messages[index];
+        final metadata = event.responseId != null || event.model != null || event.finishReason != null || event.hasUsage
+            ? ChatApiMetadata(
+                responseId: event.responseId ?? old.apiMetadata?.responseId,
+                model: event.model ?? old.apiMetadata?.model,
+                finishReason: event.finishReason ?? old.apiMetadata?.finishReason,
+                promptTokens: event.promptTokens ?? old.apiMetadata?.promptTokens,
+                completionTokens: event.completionTokens ?? old.apiMetadata?.completionTokens,
+                totalTokens: event.totalTokens ?? old.apiMetadata?.totalTokens,
+              )
+            : old.apiMetadata;
+        setState(() {
+          // Reasoning is intentionally ignored at the UI/storage boundary.
+          conversation.messages[index] = old.copyWith(content: generatedText, apiMetadata: metadata);
+          conversation.updatedAt = DateTime.now();
+        });
+        _scrollToBottom();
+      },
+      onError: (Object error) async {
+        if (!mounted || _conversation?.id != conversation.id) return;
+        final cancelled = token.isCancelled || error is ChatGenerationCancelledException;
+        setState(() {
+          final index = conversation.messages.indexWhere((m) => m.id == assistantId);
+          if (index != -1 && conversation.messages[index].content.isEmpty && conversation.messages[index].attachments.isEmpty) {
+            conversation.messages.removeAt(index);
+          }
+          _generating = false;
+          if (identical(_cancelToken, token)) _cancelToken = null;
+        });
+        await _save();
+        if (!cancelled) _snack('Something went wrong. Please try again.');
+      },
+      onDone: () async {
+        if (!mounted || _conversation?.id != conversation.id) return;
+        setState(() {
+          _generating = false;
+          if (identical(_cancelToken, token)) _cancelToken = null;
+          conversation.updatedAt = DateTime.now();
+        });
+        await _save();
+        _subscription = null;
+        _scrollToBottom();
+      },
+      cancelOnError: true,
+    );
   }
 
-  Future<void> _stopGeneration() async {
-    if (!_isGenerating) return;
-    final token = _generationCancellationToken;
-    token?.cancel();
-    await _generationSubscription?.cancel();
-    _generationSubscription = null;
-
+  Future<void> _stop() async {
+    _cancelToken?.cancel();
+    await _subscription?.cancel();
     if (!mounted) return;
     setState(() {
-      if (_conversation != null) {
-        final index = _conversation!.messages.indexWhere(
-          (message) =>
-              message.role == MessageRole.assistant &&
-              message.content.isEmpty &&
-              message.reasoningContent == null &&
-              message.toolCalls.isEmpty,
-        );
-        if (index != -1) {
-          _conversation!.messages.removeAt(index);
-        }
-        _conversation!.updatedAt = DateTime.now();
-      }
-      _isGenerating = false;
-      _generationCancellationToken = null;
+      _generating = false;
+      _cancelToken = null;
     });
-    await _saveAllConversations();
+    await _save();
   }
 
-  Future<void> _copyMessage(ChatMessage message) async {
+  Future<void> _copy(ChatMessage message) async {
     await Clipboard.setData(ClipboardData(text: message.content));
-    if (mounted) _showSnack('Copied to clipboard');
+    _snack('Copied');
   }
 
-  Future<void> _editMessage(ChatMessage message) async {
-    if (_conversation == null || _isGenerating) return;
-    final controller = TextEditingController(text: message.content);
-    final edited = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit message'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          minLines: 2,
-          maxLines: 8,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Send'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-
-    if (edited == null || edited.isEmpty || !mounted) return;
-    final index = _conversation!.messages.indexWhere((item) => item.id == message.id);
+  Future<void> _regenerate(ChatMessage message) async {
+    if (_generating || _conversation == null) return;
+    final index = _conversation!.messages.indexWhere((m) => m.id == message.id);
     if (index == -1) return;
-    setState(() {
-      _conversation!.messages =
-          _conversation!.messages.take(index + 1).toList();
-      _conversation!.messages[index] = ChatMessage(
-        id: message.id,
-        content: edited,
-        role: MessageRole.user,
-        createdAt: message.createdAt,
-        attachments: message.attachments,
-      );
-      _conversation!.updatedAt = DateTime.now();
-    });
-    await _saveAllConversations();
-    await _generateResponse();
+    setState(() => _conversation!.messages = _conversation!.messages.take(index).toList());
+    await _save();
+    await _generate();
   }
 
-  Future<void> _regenerateResponse(ChatMessage message) async {
-    if (_conversation == null || _isGenerating || !message.isAssistant) return;
-    final index = _conversation!.messages.indexWhere((item) => item.id == message.id);
-    if (index == -1) return;
-    setState(() {
-      _conversation!.messages = _conversation!.messages.take(index).toList();
-      _conversation!.updatedAt = DateTime.now();
-    });
-    await _saveAllConversations();
-    await _generateResponse();
-  }
-
-  Future<void> _deleteMessage(ChatMessage message) async {
-    if (_conversation == null || _isGenerating) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete message?'),
-        content: const Text('This will remove this message and everything after it.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    final index = _conversation!.messages.indexWhere((item) => item.id == message.id);
-    if (index == -1) return;
-    setState(() {
-      _conversation!.messages = _conversation!.messages.take(index).toList();
-      _conversation!.updatedAt = DateTime.now();
-    });
-    await _saveAllConversations();
-    _scrollToBottom(jump: true);
-  }
-
-  Future<void> _viewImage(ChatAttachment attachment) async {
-    if (!mounted) return;
+  Future<void> _viewImage(ChatAttachment image) async {
     await showDialog<void>(
       context: context,
-      barrierColor: Colors.black87,
-      builder: (context) => _FullScreenImage(
-        attachment: attachment,
-        onDownload: () => _downloadImage(attachment),
-        onEdit: () => _editImage(attachment),
+      barrierColor: Colors.black.withValues(alpha: 0.94),
+      builder: (_) => _ImageViewer(
+        image: image,
+        onDownload: () => _downloadImage(image),
+        onEdit: () => _editImage(image),
       ),
     );
   }
 
-  Future<void> _downloadImage(ChatAttachment attachment) async {
+  Future<void> _downloadImage(ChatAttachment image) async {
     try {
-      final saved = await _galleryService.saveToGallery(attachment);
-      if (mounted) {
-        _showSnack(saved ? 'Image saved to gallery' : 'Could not save image');
-      }
-    } catch (error) {
-      if (mounted) _showSnack('Could not save image: $error');
+      final saved = await _galleryService.saveToGallery(image);
+      _snack(saved ? 'Saved to gallery' : 'Could not save image');
+    } catch (_) {
+      _snack('Could not save image');
     }
   }
 
   Future<void> _editImage(ChatAttachment image) async {
-    if (_isGenerating || _conversation == null) return;
+    if (_generating || _conversation == null) return;
     final controller = TextEditingController();
     final instruction = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text('Edit image'),
         content: TextField(
           controller: controller,
           autofocus: true,
           minLines: 2,
           maxLines: 6,
-          decoration: const InputDecoration(
-            hintText: 'e.g. Change the sky to sunset and keep everything else the same.',
-          ),
+          decoration: const InputDecoration(hintText: 'Describe the change…'),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Generate edit'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Edit')),
         ],
       ),
     );
     controller.dispose();
+    if (instruction == null || instruction.isEmpty || !mounted) return;
 
-    if (instruction == null || instruction.isEmpty || !mounted || _conversation == null) {
-      return;
-    }
-
+    setState(() => _generating = true);
     try {
-      setState(() => _isGenerating = true);
-      _showSnack('Gemini is editing the image…');
-      final result = await _generationService.editImage(
-        source: image,
-        instruction: instruction,
-      );
+      final result = await _generationService.editImage(source: image, instruction: instruction);
       if (!mounted || _conversation == null) return;
       final now = DateTime.now();
       setState(() {
-        _conversation!.messages.add(
-          ChatMessage(
-            id: '${now.microsecondsSinceEpoch}_edited_image',
-            content: 'Edited image',
-            role: MessageRole.assistant,
-            createdAt: now,
-            attachments: [result.image],
-            backendContext: result.backendContext,
-          ),
-        );
+        _conversation!.messages.add(ChatMessage(
+          id: '${now.microsecondsSinceEpoch}_edited',
+          content: '',
+          role: MessageRole.assistant,
+          createdAt: now,
+          attachments: [result.image],
+          backendContext: result.backendContext,
+        ));
         _conversation!.updatedAt = now;
       });
-      await _saveAllConversations();
+      await _save();
       _scrollToBottom(jump: true);
-    } catch (error) {
-      if (mounted) _showSnack('Image edit failed: $error');
+    } catch (_) {
+      _snack('Image edit failed. Please try again.');
     } finally {
-      if (mounted) setState(() => _isGenerating = false);
+      if (mounted) setState(() => _generating = false);
     }
   }
 
-  void _useSuggestion(String prompt) {
-    if (!_isGenerating) _sendUserText(prompt);
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _scrollToBottom({bool jump = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients || (!_userIsNearBottom && !jump)) return;
+      if (!_scrollController.hasClients || (!_nearBottom && !jump)) return;
       final target = _scrollController.position.maxScrollExtent;
       if (jump) {
         _scrollController.jumpTo(target);
       } else {
-        _scrollController.animateTo(
-          target,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-        );
+        _scrollController.animateTo(target, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
       }
     });
   }
 
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
-
   void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-    );
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
   @override
   void dispose() {
-    _generationCancellationToken?.cancel();
-    _generationSubscription?.cancel();
-    _messageController.removeListener(_onInputChanged);
+    _cancelToken?.cancel();
+    _subscription?.cancel();
+    _messageController.removeListener(_refreshInput);
     _messageController.dispose();
-    _scrollController.removeListener(_onScroll);
+    _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_loading) {
+      return const Scaffold(body: Center(child: _ThinkingIndicator(label: 'Loading')));
     }
 
     return Scaffold(
@@ -739,11 +490,11 @@ class _ChatScreenState extends State<ChatScreen> {
       drawer: ChatDrawer(
         conversations: _conversations,
         currentConversationId: _conversation?.id,
-        onNewChat: _createNewChat,
-        onSelectConversation: _selectConversation,
-        onTogglePin: _togglePin,
-        onRenameConversation: _renameConversation,
-        onDeleteConversation: _deleteConversation,
+        onNewChat: _newChat,
+        onSelectConversation: _selectChat,
+        onTogglePin: _pinChat,
+        onRenameConversation: _renameChat,
+        onDeleteConversation: _deleteChat,
         onOpenSettings: () {
           Navigator.pop(context);
           _openSettings();
@@ -752,152 +503,77 @@ class _ChatScreenState extends State<ChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(),
-            Expanded(
-              child: _messages.isEmpty ? _buildWelcome() : _buildMessages(),
-            ),
-            _buildInput(),
+            _header(),
+            Expanded(child: _messages.isEmpty ? _welcome() : _messageList()),
+            _composer(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _header() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 2),
       child: Row(
         children: [
-          IconButton(
-            tooltip: 'Chats',
-            icon: const Icon(Icons.menu_rounded),
-            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-          ),
+          _HeaderButton(icon: Icons.menu_rounded, onTap: () => _scaffoldKey.currentState?.openDrawer()),
           Expanded(
-            child: GestureDetector(
-              onTap: _openSettings,
-              behavior: HitTestBehavior.opaque,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                child: Row(
+            child: Column(
+              children: [
+                Text(_conversation?.title ?? 'CYSTEM', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w650, fontSize: 15)),
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: 30,
-                      height: 30,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary.withValues(alpha: 0.14),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.auto_awesome_rounded,
-                        size: 16,
-                        color: AppTheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Flexible(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _conversation?.title ?? 'CYSTEM',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const Text(
-                            'Nemotron 3 Super',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppTheme.textMuted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF73E6A5), shape: BoxShape.circle)),
+                    const SizedBox(width: 5),
+                    const Text('CYSTEM', style: TextStyle(fontSize: 10, color: AppTheme.textMuted, letterSpacing: 1.2, fontWeight: FontWeight.w600)),
                   ],
                 ),
-              ),
+              ],
             ),
           ),
-          IconButton(
-            tooltip: 'New chat',
-            icon: const Icon(Icons.add_rounded),
-            onPressed: _isGenerating ? null : _createNewChat,
-          ),
+          _HeaderButton(icon: Icons.add_rounded, onTap: _generating ? null : _newChat),
         ],
       ),
     );
   }
 
-  Widget _buildWelcome() {
+  Widget _welcome() {
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        padding: const EdgeInsets.fromLTRB(24, 30, 24, 24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
+          constraints: const BoxConstraints(maxWidth: 600),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 64,
-                height: 64,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.13),
                   shape: BoxShape.circle,
+                  gradient: LinearGradient(colors: [AppTheme.primary.withValues(alpha: 0.26), AppTheme.primary.withValues(alpha: 0.06)]),
+                  border: Border.all(color: AppTheme.primary.withValues(alpha: 0.18)),
                 ),
-                child: const Icon(
-                  Icons.auto_awesome_rounded,
-                  size: 30,
-                  color: AppTheme.primary,
-                ),
+                child: const Icon(Icons.auto_awesome_rounded, size: 32, color: AppTheme.primarySoft),
               ),
-              const SizedBox(height: 20),
-              Text(
-                'How can I help?',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
+              const SizedBox(height: 22),
+              const Text('What are we doing today?', textAlign: TextAlign.center, style: TextStyle(fontSize: 25, fontWeight: FontWeight.w700, letterSpacing: -0.7)),
               const SizedBox(height: 8),
-              Text(
-                'Ask anything, share an image, or ask CYSTEM to generate or edit one.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
+              Text('Ask anything. Add an image. Search the web. Create something.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
               const SizedBox(height: 28),
-              _SuggestionCard(
-                icon: Icons.lightbulb_outline_rounded,
-                title: 'Explain something',
-                subtitle: 'Make a difficult topic simple',
-                onTap: () => _useSuggestion(
-                  'Explain a complex topic to me in a simple and easy-to-understand way.',
-                ),
-              ),
-              _SuggestionCard(
-                icon: Icons.code_rounded,
-                title: 'Help with code',
-                subtitle: 'Solve a programming problem',
-                onTap: () => _useSuggestion(
-                  'Help me solve a programming problem. Ask me what I am working on first.',
-                ),
-              ),
-              _SuggestionCard(
-                icon: Icons.image_outlined,
-                title: 'Generate an image',
-                subtitle: 'Create an image with Gemini',
-                onTap: () => _useSuggestion(
-                  'Generate an image of a beautiful mountain landscape at sunrise.',
-                ),
-              ),
-              _SuggestionCard(
-                icon: Icons.edit_outlined,
-                title: 'Write something',
-                subtitle: 'Draft, rewrite, or improve text',
-                onTap: () => _useSuggestion(
-                  'Help me write something. Ask me what I want to write first.',
-                ),
+              Wrap(
+                spacing: 9,
+                runSpacing: 9,
+                alignment: WrapAlignment.center,
+                children: [
+                  _PromptChip(icon: Icons.explore_outlined, text: 'Explore an idea', onTap: () => _usePrompt('Help me explore an idea.')),
+                  _PromptChip(icon: Icons.code_rounded, text: 'Write code', onTap: () => _usePrompt('Help me write some code.')),
+                  _PromptChip(icon: Icons.language_rounded, text: 'Search the web', onTap: () => _usePrompt('Search the web for the latest important news today.')),
+                  _PromptChip(icon: Icons.image_outlined, text: 'Create an image', onTap: () => _usePrompt('Create an image of a futuristic city at night.')),
+                ],
               ),
             ],
           ),
@@ -906,44 +582,44 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildMessages() {
+  void _usePrompt(String prompt) {
+    if (_generating) return;
+    _messageController.text = prompt;
+    _messageController.selection = TextSelection.collapsed(offset: prompt.length);
+    _send();
+  }
+
+  Widget _messageList() {
     return Stack(
       children: [
         ListView.builder(
           controller: _scrollController,
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
           itemCount: _messages.length,
-          itemBuilder: (context, index) {
+          itemBuilder: (_, index) {
             final message = _messages[index];
-            final generating =
-                _isGenerating && index == _messages.length - 1 && message.isAssistant;
-            return _MessageBubble(
+            final isThinking = _generating && index == _messages.length - 1 && message.isAssistant && message.content.isEmpty;
+            if (message.isTool) return const SizedBox.shrink();
+            return _MessageCard(
               message: message,
-              isGenerating: generating,
-              onCopy: message.content.isEmpty ? null : () => _copyMessage(message),
-              onEdit: message.isUser ? () => _editMessage(message) : null,
-              onRegenerate: message.isAssistant && !message.isTool
-                  ? () => _regenerateResponse(message)
-                  : null,
-              onDelete: () => _deleteMessage(message),
+              thinking: isThinking,
+              onCopy: message.content.isEmpty ? null : () => _copy(message),
+              onRegenerate: message.isAssistant && message.content.isNotEmpty ? () => _regenerate(message) : null,
               onViewImage: _viewImage,
               onDownloadImage: _downloadImage,
               onEditImage: _editImage,
             );
           },
         ),
-        if (!_userIsNearBottom && _messages.isNotEmpty)
+        if (!_nearBottom)
           Positioned(
-            right: 20,
-            bottom: 18,
+            right: 18,
+            bottom: 16,
             child: FloatingActionButton.small(
-              heroTag: 'scroll_to_bottom',
-              backgroundColor: AppTheme.surfaceInteractive,
-              foregroundColor: AppTheme.textPrimary,
-              tooltip: 'Jump to latest',
+              heroTag: 'latest',
               onPressed: () {
-                _userIsNearBottom = true;
+                _nearBottom = true;
                 _scrollToBottom(jump: true);
               },
               child: const Icon(Icons.keyboard_arrow_down_rounded),
@@ -953,93 +629,80 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildInput() {
-    final canSend =
-        _messageController.text.trim().isNotEmpty || _pendingAttachments.isNotEmpty;
+  Widget _composer() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 5, 12, 10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_pendingAttachments.isNotEmpty) _buildAttachmentStrip(),
+          if (_pendingAttachments.isNotEmpty) _attachmentStrip(),
           Container(
             decoration: BoxDecoration(
-              color: AppTheme.surfaceRaised,
-              borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x22000000),
-                  blurRadius: 18,
-                  offset: Offset(0, 6),
-                ),
-              ],
+              color: Theme.of(context).colorScheme.surfaceContainer,
+              borderRadius: BorderRadius.circular(27),
+              border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.7)),
+              boxShadow: const [BoxShadow(blurRadius: 20, offset: Offset(0, 7), color: Color(0x25000000))],
             ),
             child: TextField(
               controller: _messageController,
               minLines: 1,
-              maxLines: 7,
+              maxLines: 6,
               textCapitalization: TextCapitalization.sentences,
               textInputAction: TextInputAction.newline,
               decoration: InputDecoration(
-                hintText: _isGenerating ? 'CYSTEM is working…' : 'Message CYSTEM',
+                hintText: _generating ? 'CYSTEM is thinking…' : 'Message CYSTEM',
                 border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: const EdgeInsets.fromLTRB(4, 13, 4, 7),
-                prefixIcon: IconButton(
-                  tooltip: 'Add image',
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  onPressed: _isGenerating ? null : _pickImage,
-                ),
+                contentPadding: const EdgeInsets.fromLTRB(4, 13, 4, 8),
+                prefixIcon: IconButton(tooltip: 'Add image', onPressed: _generating ? null : _pickImage, icon: const Icon(Icons.add_rounded)),
                 suffixIcon: Padding(
                   padding: const EdgeInsets.only(right: 6, bottom: 4),
                   child: IconButton.filled(
-                    tooltip: _isGenerating ? 'Stop generating' : 'Send message',
-                    icon: Icon(
-                      _isGenerating
-                          ? Icons.stop_rounded
-                          : Icons.arrow_upward_rounded,
-                      size: 20,
-                    ),
-                    onPressed: _isGenerating
-                        ? _stopGeneration
-                        : canSend
-                            ? _sendMessage
-                            : null,
+                    tooltip: _generating ? 'Stop' : 'Send',
+                    onPressed: _generating ? _stop : (_canSend ? _send : null),
+                    icon: Icon(_generating ? Icons.stop_rounded : Icons.arrow_upward_rounded, size: 19),
                   ),
                 ),
               ),
               onSubmitted: (_) {
-                if (!_isGenerating && canSend) {
-                  _sendMessage();
-                }
+                if (!_generating && _canSend) _send();
               },
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            'CYSTEM may use tools to help. Phone actions always require your confirmation.',
-            style: Theme.of(context).textTheme.labelSmall,
-            textAlign: TextAlign.center,
-          ),
+          const SizedBox(height: 5),
+          Text('CYSTEM can make mistakes. Check important information.', style: Theme.of(context).textTheme.labelSmall),
         ],
       ),
     );
   }
 
-  Widget _buildAttachmentStrip() {
+  Widget _attachmentStrip() {
     return SizedBox(
-      height: 86,
+      height: 76,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.only(left: 4, right: 4, bottom: 7),
         itemCount: _pendingAttachments.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, index) {
-          final attachment = _pendingAttachments[index];
-          return _AttachmentPreview(
-            attachment: attachment,
-            onRemove: () => _removePendingAttachment(attachment.id),
+          final image = _pendingAttachments[index];
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(13),
+                child: Image.memory(decodeAttachmentImage(image), width: 70, height: 70, fit: BoxFit.cover),
+              ),
+              Positioned(
+                top: -6,
+                right: -6,
+                child: IconButton.filledTonal(
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 15,
+                  onPressed: () => setState(() => _pendingAttachments.removeAt(index)),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -1047,92 +710,69 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class _SuggestionCard extends StatelessWidget {
-  const _SuggestionCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
+class _HeaderButton extends StatelessWidget {
+  const _HeaderButton({required this.icon, required this.onTap});
   final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: AppTheme.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(icon, size: 20, color: AppTheme.primary),
-                ),
-                const SizedBox(width: 13),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 3),
-                      Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.arrow_forward_rounded, size: 17),
-              ],
-            ),
-          ),
-        ),
+    return IconButton(
+      onPressed: onTap,
+      icon: Icon(icon, size: 21),
+      style: IconButton.styleFrom(
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
+        shape: const CircleBorder(),
       ),
     );
   }
 }
 
-class _AttachmentPreview extends StatelessWidget {
-  const _AttachmentPreview({required this.attachment, required this.onRemove});
-
-  final ChatAttachment attachment;
-  final VoidCallback onRemove;
+class _PromptChip extends StatelessWidget {
+  const _PromptChip({required this.icon, required this.text, required this.onTap});
+  final IconData icon;
+  final String text;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
+    return ActionChip(
+      onPressed: onTap,
+      avatar: Icon(icon, size: 17),
+      label: Text(text),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    );
+  }
+}
+
+class _ThinkingIndicator extends StatelessWidget {
+  const _ThinkingIndicator({this.label = 'Thinking'});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Image.memory(
-            decodeAttachmentImage(attachment),
-            width: 78,
-            height: 78,
-            fit: BoxFit.cover,
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(16),
           ),
-        ),
-        Positioned(
-          right: -7,
-          top: -7,
-          child: IconButton.filledTonal(
-            visualDensity: VisualDensity.compact,
-            iconSize: 16,
-            tooltip: 'Remove image',
-            onPressed: onRemove,
-            icon: const Icon(Icons.close),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(width: 3, height: 3),
+              Text(label, style: Theme.of(context).textTheme.labelMedium),
+              const SizedBox(width: 7),
+              const _Dot(),
+              const SizedBox(width: 3),
+              const _Dot(),
+              const SizedBox(width: 3),
+              const _Dot(),
+            ],
           ),
         ),
       ],
@@ -1140,98 +780,71 @@ class _AttachmentPreview extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({
+class _Dot extends StatelessWidget {
+  const _Dot();
+  @override
+  Widget build(BuildContext context) => Container(width: 4, height: 4, decoration: const BoxDecoration(color: AppTheme.primary, shape: BoxShape.circle));
+}
+
+class _MessageCard extends StatelessWidget {
+  const _MessageCard({
     required this.message,
-    required this.isGenerating,
+    required this.thinking,
     required this.onCopy,
-    required this.onEdit,
     required this.onRegenerate,
-    required this.onDelete,
     required this.onViewImage,
     required this.onDownloadImage,
     required this.onEditImage,
   });
 
   final ChatMessage message;
-  final bool isGenerating;
+  final bool thinking;
   final VoidCallback? onCopy;
-  final VoidCallback? onEdit;
   final VoidCallback? onRegenerate;
-  final VoidCallback onDelete;
   final Future<void> Function(ChatAttachment) onViewImage;
   final Future<void> Function(ChatAttachment) onDownloadImage;
   final Future<void> Function(ChatAttachment) onEditImage;
 
   @override
   Widget build(BuildContext context) {
-    if (message.isTool) return _buildToolMessage(context);
-
-    final scheme = Theme.of(context).colorScheme;
-    final isUser = message.isUser;
-
+    final user = message.isUser;
     return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: user ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         constraints: const BoxConstraints(maxWidth: 760),
-        margin: EdgeInsets.only(
-          left: isUser ? 44 : 0,
-          right: isUser ? 0 : 44,
-          bottom: 18,
-        ),
-        padding: EdgeInsets.fromLTRB(
-          isUser ? 15 : 2,
-          4,
-          isUser ? 10 : 2,
-          4,
-        ),
-        decoration: BoxDecoration(
-          color: isUser ? scheme.primary.withValues(alpha: 0.16) : Colors.transparent,
-          borderRadius: BorderRadius.circular(isUser ? 20 : 8),
-        ),
+        margin: EdgeInsets.only(left: user ? 42 : 0, right: user ? 0 : 20, bottom: 20),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: user ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
-            if (message.attachments.isNotEmpty) _buildImages(context),
-            if (message.attachments.isNotEmpty && message.content.isNotEmpty)
-              const SizedBox(height: 10),
-            if (!isUser &&
-                message.reasoningContent != null &&
-                message.reasoningContent!.isNotEmpty)
-              _ReasoningSection(
-                reasoning: message.reasoningContent!,
-                isGenerating: isGenerating,
-              ),
-            if (message.content.isEmpty && isGenerating)
-              const _ThinkingIndicator(),
+            if (message.attachments.isNotEmpty) _images(context),
             if (message.content.isNotEmpty)
-              isUser
-                  ? SelectableText(
-                      message.content,
-                      style: const TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 16,
-                        height: 1.45,
-                      ),
-                    )
-                  : MarkdownBody(
-                      data: message.content,
-                      selectable: true,
-                      onTapLink: (_, href, __) {
-                        if (href != null) {
-                          Clipboard.setData(ClipboardData(text: href));
-                        }
-                      },
-                    ),
-            if (onCopy != null || onEdit != null || onRegenerate != null)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: MessageActions(
-                  isUser: isUser,
-                  onCopy: onCopy,
-                  onEdit: onEdit,
-                  onRegenerate: onRegenerate,
-                  onDelete: onDelete,
+              Container(
+                padding: user ? const EdgeInsets.symmetric(horizontal: 15, vertical: 11) : EdgeInsets.zero,
+                decoration: user
+                    ? BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.16),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(20),
+                          topRight: Radius.circular(20),
+                          bottomLeft: Radius.circular(20),
+                          bottomRight: Radius.circular(7),
+                        ),
+                      )
+                    : null,
+                child: user
+                    ? SelectableText(message.content, style: const TextStyle(fontSize: 16, height: 1.45))
+                    : MarkdownBody(data: message.content, selectable: true),
+              ),
+            if (thinking) const Padding(padding: EdgeInsets.only(top: 2), child: _ThinkingIndicator()),
+            if (!user && (onCopy != null || onRegenerate != null))
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (onCopy != null) _MiniAction(icon: Icons.copy_rounded, tooltip: 'Copy', onTap: onCopy!),
+                    if (onRegenerate != null) _MiniAction(icon: Icons.refresh_rounded, tooltip: 'Regenerate', onTap: onRegenerate!),
+                  ],
                 ),
               ),
           ],
@@ -1240,121 +853,46 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildToolMessage(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 760),
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-        decoration: BoxDecoration(
-          color: AppTheme.surface,
-          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                message.toolName == 'web_search'
-                    ? Icons.language_rounded
-                    : Icons.build_circle_outlined,
-                size: 17,
-                color: AppTheme.primary,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    message.toolName == 'web_search'
-                        ? 'Web search'
-                        : (message.toolName ?? 'Tool'),
-                    style: Theme.of(context).textTheme.labelLarge,
-                  ),
-                  const SizedBox(height: 4),
-                  MarkdownBody(
-                    data: message.content,
-                    selectable: true,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildImages(BuildContext context) {
+  Widget _images(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: message.attachments.map((attachment) {
+      children: message.attachments.map((image) {
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Stack(
-              alignment: Alignment.bottomCenter,
-              children: [
-                GestureDetector(
-                  onTap: () => onViewImage(attachment),
-                  child: Image.memory(
-                    decodeAttachmentImage(attachment),
-                    height: 320,
-                    width: double.infinity,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const SizedBox(
-                      height: 100,
-                      child: Icon(Icons.broken_image_outlined),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              color: Theme.of(context).colorScheme.surfaceContainer,
+              child: Stack(
+                alignment: Alignment.bottomCenter,
+                children: [
+                  GestureDetector(
+                    onTap: () => onViewImage(image),
+                    child: Image.memory(
+                      decodeAttachmentImage(image),
+                      width: 340,
+                      height: 320,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const SizedBox(height: 120, child: Icon(Icons.broken_image_outlined)),
                     ),
                   ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(20),
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: Container(
+                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.64), borderRadius: BorderRadius.circular(18)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _ImageAction(icon: Icons.fullscreen_rounded, onTap: () => onViewImage(image)),
+                          _ImageAction(icon: Icons.download_rounded, onTap: () => onDownloadImage(image)),
+                          _ImageAction(icon: Icons.edit_rounded, onTap: () => onEditImage(image)),
+                        ],
+                      ),
+                    ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'View',
-                        onPressed: () => onViewImage(attachment),
-                        icon: const Icon(
-                          Icons.fullscreen_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Download',
-                        onPressed: () => onDownloadImage(attachment),
-                        icon: const Icon(
-                          Icons.download_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Edit with Gemini',
-                        onPressed: () => onEditImage(attachment),
-                        icon: const Icon(
-                          Icons.edit_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -1363,14 +901,26 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _FullScreenImage extends StatelessWidget {
-  const _FullScreenImage({
-    required this.attachment,
-    required this.onDownload,
-    required this.onEdit,
-  });
+class _MiniAction extends StatelessWidget {
+  const _MiniAction({required this.icon, required this.tooltip, required this.onTap});
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => IconButton(tooltip: tooltip, onPressed: onTap, icon: Icon(icon, size: 16));
+}
 
-  final ChatAttachment attachment;
+class _ImageAction extends StatelessWidget {
+  const _ImageAction({required this.icon, required this.onTap});
+  final IconData icon;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => IconButton(onPressed: onTap, icon: Icon(icon, size: 18, color: Colors.white));
+}
+
+class _ImageViewer extends StatelessWidget {
+  const _ImageViewer({required this.image, required this.onDownload, required this.onEdit});
+  final ChatAttachment image;
   final VoidCallback onDownload;
   final VoidCallback onEdit;
 
@@ -1382,72 +932,16 @@ class _FullScreenImage extends StatelessWidget {
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            tooltip: 'Download',
-            onPressed: onDownload,
-            icon: const Icon(Icons.download_rounded),
-          ),
-          IconButton(
-            tooltip: 'Edit',
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_rounded),
-          ),
+          IconButton(onPressed: onDownload, icon: const Icon(Icons.download_rounded)),
+          IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_rounded)),
         ],
       ),
       body: Center(
         child: InteractiveViewer(
           minScale: 0.5,
           maxScale: 5,
-          child: Image.memory(
-            decodeAttachmentImage(attachment),
-            fit: BoxFit.contain,
-          ),
+          child: Image.memory(decodeAttachmentImage(image), fit: BoxFit.contain),
         ),
-      ),
-    );
-  }
-}
-
-class _ReasoningSection extends StatelessWidget {
-  const _ReasoningSection({required this.reasoning, required this.isGenerating});
-
-  final String reasoning;
-  final bool isGenerating;
-
-  @override
-  Widget build(BuildContext context) {
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      initiallyExpanded: isGenerating,
-      title: const Text('Thinking'),
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: SelectableText(
-            reasoning,
-            style: const TextStyle(
-              color: AppTheme.textSecondary,
-              fontSize: 13,
-              height: 1.45,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ThinkingIndicator extends StatelessWidget {
-  const _ThinkingIndicator();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
-      child: SizedBox(
-        width: 28,
-        height: 22,
-        child: CircularProgressIndicator(strokeWidth: 2),
       ),
     );
   }
