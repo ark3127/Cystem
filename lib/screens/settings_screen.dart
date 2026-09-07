@@ -16,7 +16,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _apiKeyController = TextEditingController();
-  final _tavilyKeyController = TextEditingController();
   final _geminiKeyController = TextEditingController();
   final _systemPromptController = TextEditingController();
   final _seedController = TextEditingController();
@@ -27,7 +26,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _obscureApiKey = true;
-  bool _obscureTavilyKey = true;
   bool _obscureGeminiKey = true;
 
   late AppSettings _settings;
@@ -47,12 +45,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     try {
       final apiKey = await _storageService.getApiKey();
-      final tavilyKey = await _storageService.getTavilySearchApiKey();
       final geminiKey = await _storageService.getGeminiApiKey();
       final settings = await _settingsService.load();
       if (!mounted) return;
       _apiKeyController.text = apiKey ?? '';
-      _tavilyKeyController.text = tavilyKey ?? '';
       _geminiKeyController.text = geminiKey ?? '';
       _settings = settings;
       _systemPromptController.text = settings.systemPrompt;
@@ -80,7 +76,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _isSaving = true);
     try {
       final settings = _settings.copyWith(
-        systemPrompt: _systemPromptController.text.trim().isEmpty ? AppSettings.defaultSystemPrompt : _systemPromptController.text.trim(),
+        systemPrompt: _systemPromptController.text.trim().isEmpty
+            ? AppSettings.defaultSystemPrompt
+            : _systemPromptController.text.trim(),
         reasoningEffort: _reasoningEffort,
         temperature: _temperature,
         maxTokens: _maxTokens,
@@ -90,12 +88,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         accentColor: _accentColor.toARGB32(),
       );
       await _storageService.saveApiKey(apiKey);
-      final tavilyKey = _tavilyKeyController.text.trim();
-      if (tavilyKey.isEmpty) {
-        await _storageService.deleteTavilySearchApiKey();
-      } else {
-        await _storageService.saveTavilySearchApiKey(tavilyKey);
-      }
       final geminiKey = _geminiKeyController.text.trim();
       if (geminiKey.isEmpty) {
         await _storageService.deleteGeminiApiKey();
@@ -127,19 +119,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _deleteTavilyKey() async {
-    await _storageService.deleteTavilySearchApiKey();
-    if (mounted) {
-      _tavilyKeyController.clear();
-      _showSnack('Web search key removed');
-    }
-  }
-
   Future<void> _deleteGeminiKey() async {
     await _storageService.deleteGeminiApiKey();
     if (mounted) {
       _geminiKeyController.clear();
-      _showSnack('Gemini vision key removed');
+      _showSnack('Gemini API key removed');
     }
   }
 
@@ -159,7 +143,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _formatTokens(int value) {
@@ -173,7 +159,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _apiKeyController.dispose();
-    _tavilyKeyController.dispose();
     _geminiKeyController.dispose();
     _systemPromptController.dispose();
     _seedController.dispose();
@@ -182,7 +167,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => Navigator.pop(context)),
@@ -190,7 +177,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: IconButton.filledTonal(onPressed: _isSaving ? null : _save, tooltip: 'Save settings', icon: _isSaving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.check_rounded, size: 19)),
+            child: IconButton.filledTonal(
+              onPressed: _isSaving ? null : _save,
+              tooltip: 'Save settings',
+              icon: _isSaving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.check_rounded, size: 19),
+            ),
           ),
         ],
       ),
@@ -226,40 +219,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           _SectionHeader(icon: Icons.auto_awesome_rounded, title: 'Model', subtitle: 'The intelligence behind CYSTEM'),
           _SettingsCard(children: [
-            Row(children: [Container(width: 42, height: 42, decoration: BoxDecoration(color: _accentColor.withValues(alpha: 0.12), shape: BoxShape.circle), child: Icon(Icons.auto_awesome_rounded, color: _accentColor)), const SizedBox(width: 13), const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Nemotron 3 Super 120B', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)), SizedBox(height: 3), Text('NVIDIA NIM', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))]))]),
+            Row(children: [
+              Container(width: 42, height: 42, decoration: BoxDecoration(color: _accentColor.withValues(alpha: .12), shape: BoxShape.circle), child: Icon(Icons.auto_awesome_rounded, color: _accentColor)),
+              const SizedBox(width: 13),
+              const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Nemotron 3 Super 120B', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                SizedBox(height: 3),
+                Text('NVIDIA NIM', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+              ])),
+            ]),
             const SizedBox(height: 20),
             const Text('Reasoning', style: TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
             const Text('Choose how much reasoning CYSTEM should use.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
             const SizedBox(height: 12),
-            SegmentedButton<String>(segments: const [ButtonSegment(value: 'none', label: Text('None')), ButtonSegment(value: 'low', label: Text('Low')), ButtonSegment(value: 'high', label: Text('High'))], selected: {_reasoningEffort}, onSelectionChanged: (selection) => setState(() => _reasoningEffort = selection.first)),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'none', label: Text('None')),
+                ButtonSegment(value: 'low', label: Text('Low')),
+                ButtonSegment(value: 'high', label: Text('High')),
+              ],
+              selected: {_reasoningEffort},
+              onSelectionChanged: (selection) => setState(() => _reasoningEffort = selection.first),
+            ),
           ]),
           const SizedBox(height: 14),
           _SettingsCard(children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Temperature', style: TextStyle(fontWeight: FontWeight.w600)), Text(_temperature.toStringAsFixed(2), style: TextStyle(color: _accentColor, fontWeight: FontWeight.w600))]),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              const Text('Temperature', style: TextStyle(fontWeight: FontWeight.w600)),
+              Text(_temperature.toStringAsFixed(2), style: TextStyle(color: _accentColor, fontWeight: FontWeight.w600)),
+            ]),
             Slider(value: _temperature, min: 0, max: 1, divisions: 20, onChanged: (value) => setState(() => _temperature = value)),
             const Text('1.0 is NVIDIA’s recommended value for Nemotron 3 Super.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
             const SizedBox(height: 18),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Maximum output', style: TextStyle(fontWeight: FontWeight.w600)), Text('${_formatTokens(_maxTokens)} tokens', style: TextStyle(color: _accentColor, fontWeight: FontWeight.w600))]),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              const Text('Maximum output', style: TextStyle(fontWeight: FontWeight.w600)),
+              Text('${_formatTokens(_maxTokens)} tokens', style: TextStyle(color: _accentColor, fontWeight: FontWeight.w600)),
+            ]),
             Slider(value: _maxTokens.toDouble(), min: 1024, max: 32768, divisions: 31, onChanged: (value) => setState(() => _maxTokens = value.round())),
           ]),
           const SizedBox(height: 24),
-          _SectionHeader(icon: Icons.visibility_outlined, title: 'Vision', subtitle: 'Let Gemini describe images for Nemotron'),
+          _SectionHeader(icon: Icons.visibility_outlined, title: 'Gemini', subtitle: 'Vision, image generation, editing, and Google Search'),
           _SettingsCard(children: [
-            _SecretField(controller: _geminiKeyController, obscure: _obscureGeminiKey, label: 'Gemini API key', hint: 'Optional — enables image understanding and generation', onToggle: () => setState(() => _obscureGeminiKey = !_obscureGeminiKey)),
+            _SecretField(controller: _geminiKeyController, obscure: _obscureGeminiKey, label: 'Gemini API key', hint: 'Required for vision, image generation, and web search', onToggle: () => setState(() => _obscureGeminiKey = !_obscureGeminiKey)),
             const SizedBox(height: 8),
-            const Text('CYSTEM sends attached images to Gemini for detailed visual analysis, then gives that analysis to Nemotron as text context. When you ask for an image, Nemotron writes the description and Gemini generates the image. The key is stored in Android secure storage.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
+            const Text('Gemini is CYSTEM’s specialist layer. It understands uploaded images, generates and edits images, and powers live Google Search. Raw specialist output stays hidden unless it becomes a user-facing image or answer.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
             const SizedBox(height: 4),
             TextButton.icon(onPressed: _deleteGeminiKey, icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('Remove Gemini key'), style: TextButton.styleFrom(alignment: Alignment.centerLeft, padding: EdgeInsets.zero)),
-          ]),
-          const SizedBox(height: 24),
-          _SectionHeader(icon: Icons.language_rounded, title: 'Web search', subtitle: 'Give CYSTEM access to live search results'),
-          _SettingsCard(children: [
-            _SecretField(controller: _tavilyKeyController, obscure: _obscureTavilyKey, label: 'Tavily API key', hint: 'Optional — enables web search', onToggle: () => setState(() => _obscureTavilyKey = !_obscureTavilyKey)),
-            const SizedBox(height: 8),
-            const Text('The key is stored in Android secure storage. CYSTEM sends it only to Tavily Search.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
-            const SizedBox(height: 4),
-            TextButton.icon(onPressed: _deleteTavilyKey, icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('Remove search key'), style: TextButton.styleFrom(alignment: Alignment.centerLeft, padding: EdgeInsets.zero)),
           ]),
           const SizedBox(height: 24),
           _SectionHeader(icon: Icons.key_outlined, title: 'NVIDIA API', subtitle: 'Your key stays on this device'),
@@ -270,10 +276,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
           const SizedBox(height: 24),
           _SectionHeader(icon: Icons.tune_rounded, title: 'Instructions', subtitle: 'Tell CYSTEM how you want it to behave'),
-          _SettingsCard(children: [TextField(controller: _systemPromptController, minLines: 6, maxLines: 12, maxLength: 12000, decoration: const InputDecoration(hintText: 'Your system instructions'))]),
+          _SettingsCard(children: [
+            TextField(controller: _systemPromptController, minLines: 6, maxLines: 12, maxLength: 12000, decoration: const InputDecoration(hintText: 'Your system instructions')),
+          ]),
           const SizedBox(height: 24),
           _SectionHeader(icon: Icons.science_outlined, title: 'Advanced', subtitle: 'Optional deterministic generation control'),
-          _SettingsCard(children: [TextField(controller: _seedController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Seed', hintText: 'Optional'), onChanged: (value) => setState(() => _seed = int.tryParse(value.trim())))]),
+          _SettingsCard(children: [
+            TextField(controller: _seedController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Seed', hintText: 'Optional'), onChanged: (value) => setState(() => _seed = int.tryParse(value.trim()))),
+          ]),
           const SizedBox(height: 24),
           FilledButton.icon(onPressed: _isSaving ? null : _save, icon: const Icon(Icons.check_rounded), label: Text(_isSaving ? 'Saving…' : 'Save settings'), style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusMedium)))),
         ],
@@ -292,7 +302,15 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 10),
-      child: Row(children: [Icon(icon, size: 19, color: Theme.of(context).colorScheme.primary), const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.titleMedium), const SizedBox(height: 2), Text(subtitle, style: Theme.of(context).textTheme.bodySmall)]))]),
+      child: Row(children: [
+        Icon(icon, size: 19, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 2),
+          Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+        ])),
+      ]),
     );
   }
 }
@@ -303,7 +321,15 @@ class _SettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerLow, borderRadius: BorderRadius.circular(AppTheme.radiusMedium)), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children));
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: .45)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
+    );
   }
 }
 
@@ -317,6 +343,16 @@ class _SecretField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(controller: controller, obscureText: obscure, autocorrect: false, enableSuggestions: false, decoration: InputDecoration(labelText: label, hintText: hint, prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20), suffixIcon: IconButton(icon: Icon(obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined), onPressed: onToggle)));
+    return TextField(
+      controller: controller,
+      obscureText: obscure,
+      autocorrect: false,
+      enableSuggestions: false,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        suffixIcon: IconButton(onPressed: onToggle, icon: Icon(obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined)),
+      ),
+    );
   }
 }
