@@ -8,104 +8,66 @@ import 'secure_storage_service.dart';
 /// Generates or edits images using Gemini's native image model. Returned text
 /// is backend context; the image itself is surfaced by Cystem's chat UI.
 class GeminiImageGenerationService {
-  GeminiImageGenerationService({http.Client Function()? clientFactory})
-      : _clientFactory = clientFactory ?? http.Client.new;
+  GeminiImageGenerationService({http.Client Function()? clientFactory}) : _clientFactory = clientFactory ?? http.Client.new;
 
   static const _model = 'gemini-3.1-flash-image';
-  static const _endpoint =
-      'https://generativelanguage.googleapis.com/v1beta/interactions';
+  static const _endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 
   final http.Client Function() _clientFactory;
   final SecureStorageService _storage = SecureStorageService();
 
   Future<GeminiImageGenerationResult> generateImage(String prompt) async {
     final cleanPrompt = prompt.trim();
-    if (cleanPrompt.isEmpty) {
-      throw const GeminiImageGenerationException(
-        'Nemotron did not provide an image description.',
-      );
-    }
-    return _run(
-      input: [
-        {
-          'type': 'text',
-          'text': '''Create the requested image based directly on the following detailed description from Cystem's main AI model, Nemotron. Generate the image itself. Preserve the intended subject, composition, style, text, and important details. Do not merely describe how to make it.\n\n$cleanPrompt''',
-        },
-      ],
-    );
+    if (cleanPrompt.isEmpty) throw const GeminiImageGenerationException('Nemotron did not provide an image description.');
+    return _run(input: [{'type': 'text', 'text': cleanPrompt}]);
   }
 
-  Future<GeminiImageGenerationResult> editImage({
-    required ChatAttachment source,
-    required String instruction,
-  }) async {
+  Future<GeminiImageGenerationResult> editImage({required ChatAttachment source, required String instruction}) async {
     final cleanInstruction = instruction.trim();
-    if (cleanInstruction.isEmpty) {
-      throw const GeminiImageGenerationException(
-        'Please describe how you want to edit the image.',
-      );
-    }
-    return _run(
-      input: [
-        {
-          'type': 'text',
-          'text': '''Edit the supplied image according to this instruction. Keep everything else unchanged unless the instruction requires it. Return the edited image, not a textual description.\n\n$cleanInstruction''',
-        },
-        {
-          'type': 'image',
-          'data': source.data,
-          'mime_type': source.mimeType,
-        },
-      ],
-    );
+    if (cleanInstruction.isEmpty) throw const GeminiImageGenerationException('Please describe how you want to edit the image.');
+    return _run(input: [
+      {'type': 'image', 'data': source.data, 'mime_type': source.mimeType},
+      {
+        'type': 'text',
+        'text': 'Edit the supplied image according to this instruction. Keep everything else unchanged unless the instruction requires it. Return the edited image, not a textual description.\n\n$cleanInstruction',
+      },
+    ]);
   }
 
-  Future<GeminiImageGenerationResult> _run({
-    required List<Map<String, dynamic>> input,
-  }) async {
+  Future<GeminiImageGenerationResult> _run({required List<Map<String, dynamic>> input}) async {
     final apiKey = await _storage.getGeminiApiKey();
     if (apiKey == null || apiKey.trim().isEmpty) {
-      throw const GeminiImageGenerationException(
-        'Gemini image generation is not configured. Add a Gemini API key in Settings → Vision.',
-      );
+      throw const GeminiImageGenerationException('Gemini image generation is not configured. Add a Gemini API key in Settings → Gemini.');
     }
 
     final client = _clientFactory();
     try {
-      final response = await client
-          .post(
-            Uri.parse(_endpoint),
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey.trim(),
-            },
-            body: jsonEncode({
-              'model': _model,
-              'input': input,
-              // Gemini Interactions expects image output configuration here.
-              // There is no "delivery" field; generated image data is returned
-              // directly in output_image / model_output image blocks.
-              'response_format': {
-                'type': 'image',
-                'image_size': '1K',
-              },
-              'store': false,
-            }),
-          )
-          .timeout(const Duration(minutes: 3));
+      final response = await client.post(
+        Uri.parse(_endpoint),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'x-goog-api-key': apiKey.trim(),
+        },
+        body: jsonEncode({
+          'model': _model,
+          'input': input,
+          'response_format': {
+            'type': 'image',
+            'mime_type': 'image/jpeg',
+            'aspect_ratio': '1:1',
+            'image_size': '1K',
+          },
+          'store': false,
+        }),
+      ).timeout(const Duration(minutes: 3));
 
-      if (response.statusCode != 200) {
-        throw GeminiImageGenerationException(
-          'Gemini image generation failed (HTTP ${response.statusCode}). ${_errorMessage(response.body)}',
-        );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw GeminiImageGenerationException('Gemini image generation failed (HTTP ${response.statusCode}). ${_errorMessage(response.body)}');
       }
 
       final decoded = jsonDecode(response.body);
-      if (decoded is! Map) {
-        throw const GeminiImageGenerationException(
-          'Gemini returned an invalid image response.',
-        );
-      }
+      if (decoded is! Map) throw const GeminiImageGenerationException('Gemini returned an invalid image response.');
 
       String? text;
       ChatAttachment? image = _attachmentFromImageContent(decoded['output_image']);
@@ -118,9 +80,7 @@ class GeminiImageGenerationService {
           for (final rawPart in content.whereType<Map>()) {
             if (rawPart['type'] == 'text' && rawPart['text'] is String) {
               final value = (rawPart['text'] as String).trim();
-              if (value.isNotEmpty) {
-                text = text == null ? value : '$text\n$value';
-              }
+              if (value.isNotEmpty) text = text == null ? value : '$text\n$value';
             } else if (rawPart['type'] == 'image' && image == null) {
               image = _attachmentFromImageContent(rawPart);
             }
@@ -129,24 +89,18 @@ class GeminiImageGenerationService {
       }
 
       if (image == null) {
-        throw const GeminiImageGenerationException(
-          'Gemini completed the request but returned no image data.',
-        );
+        final status = decoded['status'];
+        final errors = decoded['errors'];
+        final detail = errors is List ? errors.whereType<Map>().map((item) => item['message']).whereType<String>().join(' ') : '';
+        throw GeminiImageGenerationException('Gemini completed without image data${status is String ? ' (status: $status)' : ''}. ${detail.trim()}');
       }
-      return GeminiImageGenerationResult(
-        image: image,
-        backendContext: text?.trim(),
-      );
+      return GeminiImageGenerationResult(image: image, backendContext: text?.trim());
     } on GeminiImageGenerationException {
       rethrow;
     } on FormatException {
-      throw const GeminiImageGenerationException(
-        'Gemini returned an unreadable image response.',
-      );
+      throw const GeminiImageGenerationException('Gemini returned an unreadable image response.');
     } catch (error) {
-      throw GeminiImageGenerationException(
-        'Could not reach Gemini image generation. $error',
-      );
+      throw GeminiImageGenerationException('Could not reach Gemini image generation. $error');
     } finally {
       client.close();
     }
@@ -156,12 +110,7 @@ class GeminiImageGenerationService {
     if (content is! Map) return null;
     final data = content['data'];
     final mimeType = content['mime_type'] ?? content['mimeType'];
-    if (data is! String ||
-        data.isEmpty ||
-        mimeType is! String ||
-        mimeType.isEmpty) {
-      return null;
-    }
+    if (data is! String || data.isEmpty || mimeType is! String || mimeType.isEmpty) return null;
     final extension = mimeType.split('/').last.split(';').first;
     return ChatAttachment(
       id: '${DateTime.now().microsecondsSinceEpoch}_gemini_image',
@@ -177,13 +126,16 @@ class GeminiImageGenerationService {
       final decoded = jsonDecode(body);
       if (decoded is Map) {
         final error = decoded['error'];
-        if (error is Map && error['message'] is String) {
-          return error['message'] as String;
-        }
+        if (error is Map && error['message'] is String) return error['message'] as String;
         if (decoded['message'] is String) return decoded['message'] as String;
+        final errors = decoded['errors'];
+        if (errors is List) {
+          final messages = errors.whereType<Map>().map((item) => item['message']).whereType<String>().toList();
+          if (messages.isNotEmpty) return messages.join(' ');
+        }
       }
     } catch (_) {}
-    return 'Please check the Gemini API key and try again.';
+    return 'Please check the Gemini API key, model availability, and quota.';
   }
 }
 
