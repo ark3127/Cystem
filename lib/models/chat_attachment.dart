@@ -8,6 +8,8 @@ class ChatAttachment {
   final String mimeType;
   final String data;
   final String? fileName;
+  /// Containing/source page for web images. Generated and local images leave this null.
+  final String? sourceUrl;
 
   const ChatAttachment({
     required this.id,
@@ -15,6 +17,7 @@ class ChatAttachment {
     required this.mimeType,
     required this.data,
     this.fileName,
+    this.sourceUrl,
   });
 
   Map<String, dynamic> toJson() {
@@ -24,6 +27,7 @@ class ChatAttachment {
       'mimeType': mimeType,
       'data': data,
       if (fileName != null) 'fileName': fileName,
+      if (sourceUrl != null) 'sourceUrl': sourceUrl,
     };
   }
 
@@ -34,6 +38,7 @@ class ChatAttachment {
       mimeType: json['mimeType'] as String,
       data: json['data'] as String,
       fileName: json['fileName'] as String?,
+      sourceUrl: json['sourceUrl'] as String?,
     );
   }
 
