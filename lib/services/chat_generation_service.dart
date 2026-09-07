@@ -221,7 +221,9 @@ class ChatGenerationService {
 
   String _latestUserText(List<ChatMessage> messages) {
     for (var i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].isUser) return messages[i].content.trim();
+      if (messages[i].isUser) {
+        return messages[i].content.trim();
+      }
     }
     return '';
   }
@@ -261,7 +263,9 @@ class ChatGenerationService {
   List<ChatToolCall> _completedToolCalls(List<ChatStreamEvent> events) {
     final byId = <String, ChatToolCall>{};
     for (final event in events) {
-      for (final call in event.toolCalls) byId[call.id] = call;
+      for (final call in event.toolCalls) {
+        byId[call.id] = call;
+      }
     }
     return byId.values.toList();
   }
