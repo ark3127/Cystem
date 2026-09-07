@@ -99,7 +99,9 @@ class ChatGenerationService {
     var rounds = 0;
     while (true) {
       token.throwIfCancelled();
-      if (rounds++ >= maxToolRounds) throw const NvidiaApiException('The tool-call loop exceeded the safety limit.');
+      if (rounds++ >= maxToolRounds) {
+        throw const NvidiaApiException('The tool-call loop exceeded the safety limit.');
+      }
 
       final events = <ChatStreamEvent>[];
       final apiMessages = _messagesForNemotron(preparedMessages, imageRequest: wantsImage);
@@ -111,7 +113,6 @@ class ChatGenerationService {
         token.throwIfCancelled();
         events.add(event);
         if (wantsImage) {
-          // Keep Nemotron's image prompt private. Gemini receives it directly.
           yield ChatStreamEvent(
             toolCalls: event.toolCalls,
             responseId: event.responseId,
@@ -122,7 +123,6 @@ class ChatGenerationService {
             totalTokens: event.totalTokens,
           );
         } else {
-          // Reasoning remains backend-only.
           yield ChatStreamEvent(
             text: event.text,
             toolCalls: event.toolCalls,
@@ -141,10 +141,14 @@ class ChatGenerationService {
       if (toolCalls.isEmpty) {
         if (wantsImage) {
           final nemoText = _assistantText(events).trim();
-          if (nemoText.isEmpty) throw const NvidiaApiException('Nemotron did not produce an image description for Gemini.');
+          if (nemoText.isEmpty) {
+            throw const NvidiaApiException('Nemotron did not produce an image description for Gemini.');
+          }
           final generated = await _imageGenerationService.generateImage(nemoText);
           token.throwIfCancelled();
-          if (onGeneratedImage != null) await onGeneratedImage(generated.image, generated.backendContext);
+          if (onGeneratedImage != null) {
+            await onGeneratedImage(generated.image, generated.backendContext);
+          }
         }
         return;
       }
@@ -162,7 +166,9 @@ class ChatGenerationService {
       for (final call in toolCalls) {
         token.throwIfCancelled();
         final tool = _toolRegistry.find(call.name);
-        if (tool == null) throw NvidiaApiException('Nemotron requested an unavailable tool: ${call.name}.');
+        if (tool == null) {
+          throw NvidiaApiException('Nemotron requested an unavailable tool: ${call.name}.');
+        }
         try {
           _argumentValidator.validate(tool, call);
         } on FormatException catch (error) {
@@ -176,7 +182,13 @@ class ChatGenerationService {
         } catch (error) {
           token.throwIfCancelled();
           result = call.name == 'web_search'
-              ? _serviceError(service: 'Gemini Google Search', operation: 'web_search', code: 'TOOL_EXECUTION_FAILED', retryable: false, details: error.toString())
+              ? _serviceError(
+                  service: 'Gemini Google Search',
+                  operation: 'web_search',
+                  code: 'TOOL_EXECUTION_FAILED',
+                  retryable: false,
+                  details: error.toString(),
+                )
               : 'Tool execution failed: $error';
         }
         token.throwIfCancelled();
@@ -217,19 +229,28 @@ class ChatGenerationService {
   bool _latestUserRequestsImage(List<ChatMessage> messages) {
     final text = _latestUserText(messages);
     if (text.isEmpty) return false;
-    return RegExp(r'\b(generate|create|draw|make|render|design|produce|paint|illustrate)\b[\s\S]{0,100}\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b|\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b[\s\S]{0,50}\b(generate|create|draw|make|render|design|produce)\b', caseSensitive: false).hasMatch(text);
+    return RegExp(
+      r'\b(generate|create|draw|make|render|design|produce|paint|illustrate)\b[\s\S]{0,100}\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b|\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b[\s\S]{0,50}\b(generate|create|draw|make|render|design|produce)\b',
+      caseSensitive: false,
+    ).hasMatch(text);
   }
 
   bool _latestUserRequestsWebImage(List<ChatMessage> messages) {
     final text = _latestUserText(messages);
     if (text.isEmpty) return false;
-    return RegExp(r'\b(find|show|give|get|search|look up|fetch)\b[\s\S]{0,100}\b(image|images|picture|pictures|photo|photos|wallpaper|illustration)\b|\b(image|images|picture|pictures|photo|photos)\b[\s\S]{0,70}\b(from|on|over|using)\b[\s\S]{0,40}\b(internet|web|online)\b|\b(image|images|picture|pictures|photo|photos)\b[\s\S]{0,45}\b(search)\b', caseSensitive: false).hasMatch(text);
+    return RegExp(
+      r'\b(find|show|give|get|search|look up|fetch)\b[\s\S]{0,100}\b(image|images|picture|pictures|photo|photos|wallpaper|illustration)\b|\b(image|images|picture|pictures|photo|photos)\b[\s\S]{0,70}\b(from|on|over|using)\b[\s\S]{0,40}\b(internet|web|online)\b|\b(image|images|picture|pictures|photo|photos)\b[\s\S]{0,45}\b(search)\b',
+      caseSensitive: false,
+    ).hasMatch(text);
   }
 
   bool _latestUserRequestsWebSearch(List<ChatMessage> messages) {
     final text = _latestUserText(messages);
     if (text.isEmpty) return false;
-    return RegExp(r'\b(search|look up|browse|find out|check)\b[\s\S]{0,70}\b(internet|web|online|news|latest|current|today|recent)\b|\b(internet|web)\b[\s\S]{0,40}\b(search|browse|look up)\b|\bwhat(?:\'s| is)\b[\s\S]{0,30}\b(happening|latest|recent)\b', caseSensitive: false).hasMatch(text);
+    return RegExp(
+      r"\b(search|look up|browse|find out|check)\b[\s\S]{0,70}\b(internet|web|online|news|latest|current|today|recent)\b|\b(internet|web)\b[\s\S]{0,40}\b(search|browse|look up)\b|\bwhat(?:'s| is)\b[\s\S]{0,30}\b(happening|latest|recent)\b",
+      caseSensitive: false,
+    ).hasMatch(text);
   }
 
   String _withVisionContext(String userText, String analysis) {
