@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/theme/app_theme_controller.dart';
-import 'screens/chat_screen.dart';
+import 'screens/modern_chat_screen.dart';
 
 class CystemApp extends StatefulWidget {
   const CystemApp({super.key});
@@ -39,7 +39,7 @@ class _CystemAppState extends State<CystemApp> {
       theme: AppTheme.lightTheme(accent: _themeController.accentColor),
       darkTheme: AppTheme.darkTheme(accent: _themeController.accentColor),
       themeMode: _themeController.themeMode,
-      home: const ChatScreen(),
+      home: const ModernChatScreen(),
     );
   }
 }
