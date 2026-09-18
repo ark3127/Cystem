@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_attachment.dart';
+import 'retry_service.dart';
 import 'secure_storage_service.dart';
 
 /// Generates or edits images using Gemini's native image model. Returned text
@@ -12,9 +13,11 @@ class GeminiImageGenerationService {
 
   static const _model = 'gemini-3.1-flash-image';
   static const _endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+  static const _apiRevision = '2026-05-20';
 
   final http.Client Function() _clientFactory;
   final SecureStorageService _storage = SecureStorageService();
+  final RetryService _retry = const RetryService();
 
   Future<GeminiImageGenerationResult> generateImage(String prompt) async {
     final cleanPrompt = prompt.trim();
@@ -40,6 +43,20 @@ class GeminiImageGenerationService {
       throw const GeminiImageGenerationException('Gemini image generation is not configured. Add a Gemini API key in Settings → Gemini.');
     }
 
+    // Retries transient failures (429/5xx/network) with backoff instead of
+    // failing on the first hiccup.
+    return _retry.run(
+      () => _attemptRun(input, apiKey),
+      maxAttempts: 3,
+      initialDelay: const Duration(seconds: 1),
+      shouldRetry: (error) => error is! GeminiImageGenerationException || error.retryable,
+    );
+  }
+
+  Future<GeminiImageGenerationResult> _attemptRun(
+    List<Map<String, dynamic>> input,
+    String apiKey,
+  ) async {
     final client = _clientFactory();
     try {
       final response = await client.post(
@@ -48,6 +65,7 @@ class GeminiImageGenerationService {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'x-goog-api-key': apiKey.trim(),
+          'Api-Revision': _apiRevision,
         },
         body: jsonEncode({
           'model': _model,
@@ -63,11 +81,14 @@ class GeminiImageGenerationService {
       ).timeout(const Duration(minutes: 3));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw GeminiImageGenerationException('Gemini image generation failed (HTTP ${response.statusCode}). ${_errorMessage(response.body)}');
+        throw GeminiImageGenerationException(
+          'Gemini image generation failed (HTTP ${response.statusCode}). ${_errorMessage(response.body)}',
+          retryable: response.statusCode >= 500 || response.statusCode == 429,
+        );
       }
 
       final decoded = jsonDecode(response.body);
-      if (decoded is! Map) throw const GeminiImageGenerationException('Gemini returned an invalid image response.');
+      if (decoded is! Map) throw const GeminiImageGenerationException('Gemini returned an invalid image response.', retryable: true);
 
       String? text;
       ChatAttachment? image = _attachmentFromImageContent(decoded['output_image']);
@@ -92,15 +113,18 @@ class GeminiImageGenerationService {
         final status = decoded['status'];
         final errors = decoded['errors'];
         final detail = errors is List ? errors.whereType<Map>().map((item) => item['message']).whereType<String>().join(' ') : '';
-        throw GeminiImageGenerationException('Gemini completed without image data${status is String ? ' (status: $status)' : ''}. ${detail.trim()}');
+        throw GeminiImageGenerationException(
+          'Gemini completed without image data${status is String ? ' (status: $status)' : ''}. ${detail.trim()}',
+          retryable: true,
+        );
       }
       return GeminiImageGenerationResult(image: image, backendContext: text?.trim());
     } on GeminiImageGenerationException {
       rethrow;
     } on FormatException {
-      throw const GeminiImageGenerationException('Gemini returned an unreadable image response.');
+      throw const GeminiImageGenerationException('Gemini returned an unreadable image response.', retryable: true);
     } catch (error) {
-      throw GeminiImageGenerationException('Could not reach Gemini image generation. $error');
+      throw GeminiImageGenerationException('Could not reach Gemini image generation. $error', retryable: true);
     } finally {
       client.close();
     }
@@ -146,8 +170,9 @@ class GeminiImageGenerationResult {
 }
 
 class GeminiImageGenerationException implements Exception {
-  const GeminiImageGenerationException(this.message);
+  const GeminiImageGenerationException(this.message, {this.retryable = false});
   final String message;
+  final bool retryable;
   @override
   String toString() => message;
 }
