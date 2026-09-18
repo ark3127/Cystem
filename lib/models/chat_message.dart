@@ -137,16 +137,22 @@ class ChatMessage {
       createdAt: DateTime.parse(json['createdAt'] as String),
       reasoningContent: json['reasoningContent'] as String?,
       toolCalls: rawToolCalls
-          .map((call) => ChatToolCall.fromJson(Map<String, dynamic>.from(call as Map)))
+          .map((call) => ChatToolCall.fromJson(
+                Map<String, dynamic>.from(call as Map),
+              ))
           .toList(),
       toolCallId: json['toolCallId'] as String?,
       toolName: json['toolName'] as String?,
       attachments: rawAttachments
-          .map((item) => ChatAttachment.fromJson(Map<String, dynamic>.from(item as Map)))
+          .map((item) => ChatAttachment.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ))
           .toList(),
       backendContext: json['backendContext'] as String?,
       apiMetadata: rawMetadata is Map
-          ? ChatApiMetadata.fromJson(Map<String, dynamic>.from(rawMetadata))
+          ? ChatApiMetadata.fromJson(
+              Map<String, dynamic>.from(rawMetadata),
+            )
           : null,
     );
   }
@@ -173,7 +179,11 @@ class ChatMessage {
     return {
       'role': role.name,
       'content': [
-        if (content.isNotEmpty) {'type': 'text', 'text': content},
+        if (content.isNotEmpty)
+          {
+            'type': 'text',
+            'text': content,
+          },
         ...attachments.map((attachment) => attachment.toApiContentPart()),
       ],
       if (toolCalls.isNotEmpty && isAssistant)
