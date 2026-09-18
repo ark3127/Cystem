@@ -2,10 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../core/theme/app_theme.dart';
 import '../models/chat_attachment.dart';
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
@@ -14,11 +12,8 @@ import '../services/app_tool_registry.dart';
 import '../services/chat_cancellation_token.dart';
 import '../services/chat_generation_service.dart';
 import '../services/chat_storage_service.dart';
-import '../services/image_attachment_service.dart';
 import '../services/image_gallery_service.dart';
 import '../widgets/attachment_picker_sheet.dart';
-import '../widgets/chat_drawer.dart';
-import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -60,9 +55,26 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+
     _input.addListener(_changed);
     _scroll.addListener(_scrolled);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _input
+      ..removeListener(_changed)
+      ..dispose();
+
+    _scroll
+      ..removeListener(_scrolled)
+      ..dispose();
+
+    _subscription?.cancel();
+    _cancel?.cancel();
+
+    super.dispose();
   }
 
   void _changed() {
@@ -289,7 +301,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _pending = [];
 
       if (_chat!.title == 'New Chat') {
-        final title = text.isEmpty ? 'Attachment message' : text;
+        final title =
+            text.isEmpty ? 'Attachment message' : text;
 
         _chat!.title = title.length > 40
             ? '${title.substring(0, 40)}…'
@@ -512,7 +525,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (index < 0) return;
 
     setState(() {
-      _chat!.messages = _chat!.messages.take(index).toList();
+      _chat!.messages =
+          _chat!.messages.take(index).toList();
     });
 
     await _save();
@@ -559,7 +573,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _scrollToBottom({bool jump = false}) {
     if (!_scroll.hasClients) return;
+
     final target = _scroll.position.maxScrollExtent;
+
     if (jump) {
       _scroll.jumpTo(target);
     } else {
@@ -573,17 +589,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _snack(String message) {
     if (!mounted) return;
+
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+      ..showSnackBar(
+        SnackBar(content: Text(message)),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
     }
+
     final messages = _messages;
+
     return Scaffold(
       key: _scaffold,
       appBar: AppBar(
@@ -605,13 +630,16 @@ class _ChatScreenState extends State<ChatScreen> {
               itemCount: messages.length,
               itemBuilder: (context, index) {
                 final message = messages[index];
+
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Align(
                     alignment: message.role == MessageRole.user
                         ? Alignment.centerRight
                         : Alignment.centerLeft,
-                    child: SelectableText(message.content),
+                    child: SelectableText(
+                      message.content,
+                    ),
                   ),
                 );
               },
@@ -619,14 +647,19 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           if (_pending.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text('${_pending.length} attachment(s) selected'),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+              ),
+              child: Text(
+                '${_pending.length} attachment(s) selected',
+              ),
             ),
           SafeArea(
             child: Row(
               children: [
                 IconButton(
-                  onPressed: _generating ? null : _pickAttachment,
+                  onPressed:
+                      _generating ? null : _pickAttachment,
                   icon: const Icon(Icons.attach_file),
                 ),
                 Expanded(
@@ -642,7 +675,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: _canSend && !_generating ? _send : null,
+                  onPressed:
+                      _canSend && !_generating ? _send : null,
                   icon: const Icon(Icons.send),
                 ),
               ],
@@ -668,11 +702,19 @@ class _ImageViewer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      content: Text(image.fileName),
+      content: Text(
+        image.fileName ?? 'Unnamed image',
+      ),
       actions: [
-        TextButton(onPressed: onDownload, child: const Text('Save')),
+        TextButton(
+          onPressed: onDownload,
+          child: const Text('Save'),
+        ),
         if (onOpenSource != null)
-          TextButton(onPressed: onOpenSource, child: const Text('Open source')),
+          TextButton(
+            onPressed: onOpenSource,
+            child: const Text('Open source'),
+          ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Close'),
