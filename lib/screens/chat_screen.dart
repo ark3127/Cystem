@@ -31,7 +31,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   final _storage = ChatStorageService();
-  final _images = ImageAttachmentService();
   final _gallery = ImageGalleryService();
 
   final _generation = ChatGenerationService(
@@ -1317,6 +1316,17 @@ class _Message extends StatelessWidget {
               const Padding(
                 padding: EdgeInsets.only(top: 3),
                 child: _Thinking(label: 'Thinking'),
+              ),
+            if (!user && message.apiMetadata?.model != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  message.apiMetadata!.model!,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 10,
+                      ),
+                ),
               ),
             if (!user &&
                 (onCopy != null || onRegenerate != null))
