@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_attachment.dart';
+import 'retry_service.dart';
 import 'secure_storage_service.dart';
 
 /// Uses Gemini as Cystem's vision layer. Nemotron remains the main text model.
@@ -14,9 +15,13 @@ class GeminiVisionService {
   static const _model = 'gemini-3.8-flash';
   static const _endpoint =
       'https://generativelanguage.googleapis.com/v1beta/interactions';
+  // Pins the Interactions API to a known-good revision. See:
+  // https://ai.google.dev/gemini-api/docs/interactions/quickstart
+  static const _apiRevision = '2026-05-20';
 
   final http.Client Function() _clientFactory;
   final SecureStorageService _storage = SecureStorageService();
+  final RetryService _retry = const RetryService();
 
   Future<String> analyzeImages(List<ChatAttachment> attachments) async {
     if (attachments.isEmpty) return '';
@@ -44,6 +49,20 @@ Include everything that could matter: scene and objects, people, actions, spatia
       ),
     ];
 
+    // Retries transient failures (429/5xx/network) with backoff instead of
+    // failing on the first hiccup.
+    return _retry.run(
+      () => _attemptAnalyze(input, apiKey),
+      maxAttempts: 3,
+      initialDelay: const Duration(seconds: 1),
+      shouldRetry: (error) => error is! GeminiVisionException || error.retryable,
+    );
+  }
+
+  Future<String> _attemptAnalyze(
+    List<Map<String, dynamic>> input,
+    String apiKey,
+  ) async {
     final client = _clientFactory();
     try {
       final response = await client
@@ -52,6 +71,10 @@ Include everything that could matter: scene and objects, people, actions, spatia
             headers: {
               'Content-Type': 'application/json',
               'x-goog-api-key': apiKey.trim(),
+              // The Interactions API requires this to pin a stable API
+              // revision; without it, requests can fail unpredictably as
+              // Google rolls the endpoint forward.
+              'Api-Revision': _apiRevision,
             },
             body: jsonEncode({
               'model': _model,
@@ -68,6 +91,7 @@ Include everything that could matter: scene and objects, people, actions, spatia
       if (response.statusCode != 200) {
         throw GeminiVisionException(
           'Gemini vision failed with HTTP ${response.statusCode}. ${_errorMessage(response.body)}',
+          retryable: response.statusCode >= 500 || response.statusCode == 429,
         );
       }
 
@@ -76,6 +100,7 @@ Include everything that could matter: scene and objects, people, actions, spatia
       if (text.trim().isEmpty) {
         throw const GeminiVisionException(
           'Gemini returned an empty visual analysis.',
+          retryable: true,
         );
       }
       return text.trim();
@@ -121,8 +146,9 @@ Include everything that could matter: scene and objects, people, actions, spatia
 }
 
 class GeminiVisionException implements Exception {
-  const GeminiVisionException(this.message);
+  const GeminiVisionException(this.message, {this.retryable = false});
   final String message;
+  final bool retryable;
 
   @override
   String toString() => message;
