@@ -64,6 +64,7 @@ class AttachmentService {
 
   Future<ChatAttachment?> pickDocument() async {
     final result = await FilePicker.platform.pickFiles(
+      withData: true,
       type: FileType.custom,
       allowedExtensions: [
         'pdf',
@@ -86,6 +87,7 @@ class AttachmentService {
 
   Future<ChatAttachment?> pickAudio() async {
     final result = await FilePicker.platform.pickFiles(
+      withData: true,
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'],
     );
@@ -93,8 +95,11 @@ class AttachmentService {
   }
 
   Future<ChatAttachment?> pickAnyFile() async {
-    final result = await FilePicker.platform.pickFiles();
-    return _fromPlatformFile(result, typeForPath(result?.files.single.name ?? ''));
+    final result = await FilePicker.platform.pickFiles(withData: true);
+    return _fromPlatformFile(
+      result,
+      typeForPath(result?.files.single.name ?? ''),
+    );
   }
 
   Future<ChatAttachment?> _fromPlatformFile(
@@ -104,14 +109,28 @@ class AttachmentService {
     if (result == null || result.files.isEmpty) return null;
 
     final platformFile = result.files.single;
-    final path = platformFile.path;
-    if (path == null) return null;
+    final mimeType = mimeTypeForPath(platformFile.name);
 
-    return fromFile(
-      File(path),
-      type: type,
-      mimeType: mimeTypeForPath(platformFile.name),
-    );
+    final path = platformFile.path;
+    if (path != null) {
+      return fromFile(
+        File(path),
+        type: type,
+        mimeType: mimeType,
+      );
+    }
+
+    final bytes = platformFile.bytes;
+    if (bytes != null) {
+      return fromBytes(
+        bytes: bytes,
+        fileName: platformFile.name,
+        type: type,
+        mimeType: mimeType,
+      );
+    }
+
+    return null;
   }
 
   Future<ChatAttachment> fromXFileAuto(
