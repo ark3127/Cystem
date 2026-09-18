@@ -281,6 +281,7 @@ class NvidiaApiService {
 
   Future<Map<String, dynamic>> _buildBody(
     List<ChatMessage> messages, {
+    required String model,
     required bool stream,
     String? reasoningEffort,
     double? temperature,
