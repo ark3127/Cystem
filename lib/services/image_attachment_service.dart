@@ -54,4 +54,10 @@ class ImageAttachmentService {
   static const Set<String> _supportedMimeTypes = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'};
 }
 
-Uint8List decodeAttachmentImage(ChatAttachment attachment) => base64Decode(attachment.data);
+Uint8List decodeAttachmentImage(ChatAttachment attachment) {
+  final data = attachment.data;
+  if (data == null || data.isEmpty) {
+    throw const FormatException('Attachment has no image data.');
+  }
+  return base64Decode(data);
+}
