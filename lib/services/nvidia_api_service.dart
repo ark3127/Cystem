@@ -10,6 +10,7 @@ import '../models/chat_response_format.dart';
 import '../models/chat_stream_event.dart';
 import '../models/chat_tool.dart';
 import '../models/chat_tool_call.dart';
+import '../models/cystem_model.dart';
 import 'app_settings_service.dart';
 import 'chat_cancellation_token.dart';
 import 'secure_storage_service.dart';
@@ -32,7 +33,10 @@ class NvidiaApiService {
       'https://integrate.api.nvidia.com/v1/chat/completions';
   static const String _statusBaseUrl =
       'https://integrate.api.nvidia.com/v1/status';
-  static const String model = 'nvidia/nemotron-3-super-120b-a12b';
+  static const String model = CystemModels.superModel;
+  static const String superModel = CystemModels.superModel;
+  static const String nanoOmniModel = CystemModels.nanoOmni;
+  static const String ultraModel = CystemModels.ultra;
   static const Duration requestTimeout = Duration(minutes: 5);
   static const Duration pollInterval = Duration(seconds: 1);
   static const int maxPollAttempts = 300;
@@ -43,6 +47,7 @@ class NvidiaApiService {
 
   Future<ChatCompletionResult> completeMessage(
     List<ChatMessage> messages, {
+    String model = CystemModels.superModel,
     String? reasoningEffort,
     double? temperature,
     int? maxTokens,
@@ -55,6 +60,7 @@ class NvidiaApiService {
     final apiKey = await _apiKey();
     final body = await _buildBody(
       messages,
+      model: model,
       reasoningEffort: reasoningEffort,
       temperature: temperature,
       maxTokens: maxTokens,
@@ -105,6 +111,7 @@ class NvidiaApiService {
 
   Stream<ChatStreamEvent> streamMessage(
     List<ChatMessage> messages, {
+    String model = CystemModels.superModel,
     String? reasoningEffort,
     double? temperature,
     int? maxTokens,
@@ -128,6 +135,7 @@ class NvidiaApiService {
         final apiKey = await _apiKey();
         final body = await _buildBody(
           messages,
+          model: model,
           reasoningEffort: reasoningEffort,
           temperature: temperature,
           maxTokens: maxTokens,
