@@ -27,10 +27,10 @@ class ImageGalleryService {
     return file;
   }
 
-  String _extension(String? mimeType, String? fileName) {
+  String _extension(String mimeType, String? fileName) {
     final name = fileName?.split('.').last.toLowerCase();
     if (name != null && name.isNotEmpty && name.length <= 5) return name;
-    return switch (mimeType?.toLowerCase()) {
+    return switch (mimeType.toLowerCase()) {
       'image/jpeg' => 'jpg',
       'image/webp' => 'webp',
       'image/gif' => 'gif',
