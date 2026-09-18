@@ -1,118 +1,126 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/chat_attachment.dart';
 
 class AttachmentService {
-  AttachmentService({ImagePicker? picker})
-      : _picker = picker ?? ImagePicker();
+  AttachmentService({ImagePicker? picker}) : _picker = picker ?? ImagePicker();
 
   final ImagePicker _picker;
-
-  // ---------------------------------------------------------------------------
-  // Image picking
-  // ---------------------------------------------------------------------------
 
   Future<ChatAttachment?> pickImage({
     ImageSource source = ImageSource.gallery,
     int imageQuality = 85,
     ChatAttachmentType type = ChatAttachmentType.image,
   }) async {
-    final XFile? file = await _picker.pickImage(
+    final file = await _picker.pickImage(
       source: source,
       imageQuality: imageQuality,
     );
-
-    if (file == null) {
-      return null;
-    }
-
-    return fromXFileAuto(
-      file,
-      type: type,
-    );
+    if (file == null) return null;
+    return fromXFileAuto(file, type: type);
   }
 
-  Future<List<ChatAttachment>> pickImages({
-    int imageQuality = 85,
-  }) async {
-    final List<XFile> files = await _picker.pickMultiImage(
-      imageQuality: imageQuality,
-    );
-
-    final List<ChatAttachment> attachments = [];
-
-    for (final XFile file in files) {
-      attachments.add(
-        await fromXFileAuto(
+  Future<List<ChatAttachment>> pickImages({int imageQuality = 85}) async {
+    final files = await _picker.pickMultiImage(imageQuality: imageQuality);
+    return Future.wait(
+      files.map(
+        (file) => fromXFileAuto(
           file,
           type: ChatAttachmentType.image,
         ),
-      );
-    }
-
-    return attachments;
+      ),
+    );
   }
 
   Future<ChatAttachment?> pickImageAttachment({
     ImageSource source = ImageSource.gallery,
     int imageQuality = 85,
   }) {
-    return pickImage(
-      source: source,
-      imageQuality: imageQuality,
-      type: ChatAttachmentType.image,
-    );
+    return pickImage(source: source, imageQuality: imageQuality);
   }
-
-  // ---------------------------------------------------------------------------
-  // Video picking
-  // ---------------------------------------------------------------------------
 
   Future<XFile?> pickVideo({
     ImageSource source = ImageSource.gallery,
     Duration? maxDuration,
-  }) async {
-    return _picker.pickVideo(
-      source: source,
-      maxDuration: maxDuration,
-    );
+  }) {
+    return _picker.pickVideo(source: source, maxDuration: maxDuration);
   }
 
   Future<ChatAttachment?> pickVideoAttachment({
     ImageSource source = ImageSource.gallery,
     Duration? maxDuration,
   }) async {
-    final XFile? file = await pickVideo(
+    final file = await pickVideo(
       source: source,
       maxDuration: maxDuration,
     );
-
-    if (file == null) {
-      return null;
-    }
-
-    return fromXFileAuto(
-      file,
-      type: ChatAttachmentType.video,
-    );
+    if (file == null) return null;
+    return fromXFileAuto(file, type: ChatAttachmentType.video);
   }
 
-  // ---------------------------------------------------------------------------
-  // Convert XFile / File into ChatAttachment
-  // ---------------------------------------------------------------------------
+  Future<ChatAttachment?> pickDocument() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: [
+        'pdf',
+        'doc',
+        'docx',
+        'txt',
+        'csv',
+        'json',
+        'xml',
+        'xls',
+        'xlsx',
+        'ppt',
+        'pptx',
+        'zip',
+        'rar',
+      ],
+    );
+    return _fromPlatformFile(result, ChatAttachmentType.document);
+  }
+
+  Future<ChatAttachment?> pickAudio() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'],
+    );
+    return _fromPlatformFile(result, ChatAttachmentType.audio);
+  }
+
+  Future<ChatAttachment?> pickAnyFile() async {
+    final result = await FilePicker.platform.pickFiles();
+    return _fromPlatformFile(result, typeForPath(result?.files.single.name ?? ''));
+  }
+
+  Future<ChatAttachment?> _fromPlatformFile(
+    FilePickerResult? result,
+    ChatAttachmentType type,
+  ) async {
+    if (result == null || result.files.isEmpty) return null;
+
+    final platformFile = result.files.single;
+    final path = platformFile.path;
+    if (path == null) return null;
+
+    return fromFile(
+      File(path),
+      type: type,
+      mimeType: mimeTypeForPath(platformFile.name),
+    );
+  }
 
   Future<ChatAttachment> fromXFileAuto(
     XFile file, {
     ChatAttachmentType? type,
     String? mimeType,
-  }) async {
-    final File localFile = File(file.path);
-
+  }) {
     return fromFile(
-      localFile,
+      File(file.path),
       type: type ?? typeForPath(file.path),
       mimeType: mimeType ?? mimeTypeForPath(file.path),
     );
@@ -122,12 +130,8 @@ class AttachmentService {
     XFile file, {
     required ChatAttachmentType type,
     String? mimeType,
-  }) async {
-    return fromXFileAuto(
-      file,
-      type: type,
-      mimeType: mimeType,
-    );
+  }) {
+    return fromXFileAuto(file, type: type, mimeType: mimeType);
   }
 
   Future<ChatAttachment> fromFile(
@@ -135,20 +139,16 @@ class AttachmentService {
     required ChatAttachmentType type,
     String? mimeType,
   }) async {
-    final List<int> bytes = await file.readAsBytes();
-    final String fileName = file.path.split(Platform.pathSeparator).last;
-
-    final String resolvedMimeType =
-        mimeType ?? mimeTypeForPath(file.path);
+    final bytes = await file.readAsBytes();
+    final fileName = file.path.split(Platform.pathSeparator).last;
 
     return ChatAttachment(
       id: '${DateTime.now().microsecondsSinceEpoch}_$fileName',
       type: type,
       fileName: fileName,
-      filePath: file.path,
-      mimeType: resolvedMimeType,
+      mimeType: mimeType ?? mimeTypeForPath(file.path),
       fileSize: bytes.length,
-      base64Data: base64Encode(bytes),
+      data: base64Encode(bytes),
     );
   }
 
@@ -157,64 +157,33 @@ class AttachmentService {
     required String fileName,
     required ChatAttachmentType type,
     String? mimeType,
-    String? filePath,
   }) async {
     return ChatAttachment(
       id: '${DateTime.now().microsecondsSinceEpoch}_$fileName',
       type: type,
       fileName: fileName,
-      filePath: filePath,
       mimeType: mimeType ?? mimeTypeForPath(fileName),
       fileSize: bytes.length,
-      base64Data: base64Encode(bytes),
+      data: base64Encode(bytes),
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Type detection
-  // ---------------------------------------------------------------------------
-
   ChatAttachmentType typeForPath(String path) {
-    final String extension = _extension(path);
-
-    if (_imageExtensions.contains(extension)) {
-      return ChatAttachmentType.image;
-    }
-
-    if (_videoExtensions.contains(extension)) {
-      return ChatAttachmentType.video;
-    }
-
-    if (_audioExtensions.contains(extension)) {
-      return ChatAttachmentType.audio;
-    }
-
-    if (_documentExtensions.contains(extension)) {
-      return ChatAttachmentType.document;
-    }
-
-    if (_textExtensions.contains(extension)) {
-      return ChatAttachmentType.text;
-    }
-
+    final extension = _extension(path);
+    if (_imageExtensions.contains(extension)) return ChatAttachmentType.image;
+    if (_videoExtensions.contains(extension)) return ChatAttachmentType.video;
+    if (_audioExtensions.contains(extension)) return ChatAttachmentType.audio;
+    if (_documentExtensions.contains(extension)) return ChatAttachmentType.document;
+    if (_textExtensions.contains(extension)) return ChatAttachmentType.text;
     return ChatAttachmentType.unknown;
   }
 
   ChatAttachmentType typeForMimeType(String mimeType) {
-    final String mime = mimeType.toLowerCase().trim();
-
-    if (mime.startsWith('image/')) {
-      return ChatAttachmentType.image;
-    }
-
-    if (mime.startsWith('video/')) {
-      return ChatAttachmentType.video;
-    }
-
-    if (mime.startsWith('audio/')) {
-      return ChatAttachmentType.audio;
-    }
-
+    final mime = mimeType.toLowerCase().trim();
+    if (mime.startsWith('image/')) return ChatAttachmentType.image;
+    if (mime.startsWith('video/')) return ChatAttachmentType.video;
+    if (mime.startsWith('audio/')) return ChatAttachmentType.audio;
+    if (mime.startsWith('text/')) return ChatAttachmentType.text;
     if (mime == 'application/pdf' ||
         mime.contains('word') ||
         mime.contains('excel') ||
@@ -225,23 +194,11 @@ class AttachmentService {
         mime.contains('rar')) {
       return ChatAttachmentType.document;
     }
-
-    if (mime.startsWith('text/')) {
-      return ChatAttachmentType.text;
-    }
-
     return ChatAttachmentType.unknown;
   }
 
-  // ---------------------------------------------------------------------------
-  // MIME detection
-  // ---------------------------------------------------------------------------
-
   String mimeTypeForPath(String path) {
-    final String extension = _extension(path);
-
-    switch (extension) {
-      // Images
+    switch (_extension(path)) {
       case 'jpg':
       case 'jpeg':
         return 'image/jpeg';
@@ -251,28 +208,14 @@ class AttachmentService {
         return 'image/gif';
       case 'webp':
         return 'image/webp';
-      case 'bmp':
-        return 'image/bmp';
       case 'heic':
         return 'image/heic';
-      case 'heif':
-        return 'image/heif';
-
-      // Videos
       case 'mp4':
         return 'video/mp4';
       case 'mov':
         return 'video/quicktime';
       case 'mkv':
         return 'video/x-matroska';
-      case 'avi':
-        return 'video/x-msvideo';
-      case 'webm':
-        return 'video/webm';
-      case '3gp':
-        return 'video/3gpp';
-
-      // Audio
       case 'mp3':
         return 'audio/mpeg';
       case 'wav':
@@ -285,8 +228,6 @@ class AttachmentService {
         return 'audio/ogg';
       case 'flac':
         return 'audio/flac';
-
-      // Documents
       case 'pdf':
         return 'application/pdf';
       case 'doc':
@@ -301,12 +242,6 @@ class AttachmentService {
         return 'application/vnd.ms-powerpoint';
       case 'pptx':
         return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-      case 'zip':
-        return 'application/zip';
-      case 'rar':
-        return 'application/vnd.rar';
-
-      // Text
       case 'txt':
         return 'text/plain';
       case 'csv':
@@ -317,73 +252,39 @@ class AttachmentService {
         return 'application/xml';
       case 'md':
         return 'text/markdown';
-
+      case 'zip':
+        return 'application/zip';
+      case 'rar':
+        return 'application/vnd.rar';
       default:
         return 'application/octet-stream';
     }
   }
 
   String _extension(String path) {
-    final String cleanPath = path.split('?').first;
-    final int dotIndex = cleanPath.lastIndexOf('.');
-
-    if (dotIndex == -1 || dotIndex == cleanPath.length - 1) {
-      return '';
-    }
-
+    final cleanPath = path.split('?').first;
+    final dotIndex = cleanPath.lastIndexOf('.');
+    if (dotIndex == -1 || dotIndex == cleanPath.length - 1) return '';
     return cleanPath.substring(dotIndex + 1).toLowerCase();
   }
 
-  // ---------------------------------------------------------------------------
-  // Supported extensions
-  // ---------------------------------------------------------------------------
-
-  static const Set<String> _imageExtensions = {
-    'jpg',
-    'jpeg',
-    'png',
-    'gif',
-    'webp',
-    'bmp',
-    'heic',
-    'heif',
+  static const _imageExtensions = {
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic',
   };
 
-  static const Set<String> _videoExtensions = {
-    'mp4',
-    'mov',
-    'mkv',
-    'avi',
-    'webm',
-    '3gp',
+  static const _videoExtensions = {
+    'mp4', 'mov', 'mkv',
   };
 
-  static const Set<String> _audioExtensions = {
-    'mp3',
-    'wav',
-    'm4a',
-    'aac',
-    'ogg',
-    'flac',
+  static const _audioExtensions = {
+    'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac',
   };
 
-  static const Set<String> _documentExtensions = {
-    'pdf',
-    'doc',
-    'docx',
-    'xls',
-    'xlsx',
-    'ppt',
-    'pptx',
-    'zip',
-    'rar',
+  static const _documentExtensions = {
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'rar',
   };
 
-  static const Set<String> _textExtensions = {
-    'txt',
-    'csv',
-    'json',
-    'xml',
-    'md',
+  static const _textExtensions = {
+    'txt', 'csv', 'json', 'xml', 'md',
   };
 }
