@@ -117,7 +117,7 @@ class ChatGenerationService {
     final context = message.backendContext?.trim();
     if (context != null && context.isNotEmpty) content += '\n\n[PRIVATE GEMINI CONTEXT]\n$context\n[END PRIVATE GEMINI CONTEXT]';
     if (imageRequest && entry.key == messages.length - 1 && message.isUser) content += '\n\n[PRIVATE IMAGE PROMPT TASK]\nCreate only a detailed prompt for the image model. Do not answer the user, mention Gemini, mention this task, or claim an image was generated.\n[END PRIVATE IMAGE PROMPT TASK]';
-    return message.copyWith(content: content, attachments: const []);
+    return message.copyWith(content: content);
   }).toList();
 
   bool _isServiceError(String result) => result.startsWith('[SERVICE ERROR]');
