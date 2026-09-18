@@ -33,6 +33,9 @@ class WebSearchService implements ChatToolExecutor {
   static const _searchModel = 'gemini-3.8-flash';
   static const _interactionsEndpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
   static const _generateContentEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent';
+  // Only the Interactions API (used by _attemptSearch below) needs this —
+  // the legacy generateContent endpoint never sets it.
+  static const _apiRevision = '2026-05-20';
   static const _maxImageBytes = 8 * 1024 * 1024;
 
   static const List<ChatTool> definitions = [
@@ -106,6 +109,7 @@ class WebSearchService implements ChatToolExecutor {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'x-goog-api-key': apiKey.trim(),
+          'Api-Revision': _apiRevision,
         },
         body: jsonEncode({
           'model': _searchModel,
