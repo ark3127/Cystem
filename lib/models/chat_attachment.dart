@@ -60,6 +60,45 @@ class ChatAttachment {
     };
   }
 
+  Map<String, dynamic> toApiContentPart() {
+    final url = sourceUrl;
+    if (url != null && url.isNotEmpty) {
+      return {
+        'type': 'image_url',
+        'image_url': {'url': url},
+      };
+    }
+    final payload = data;
+    if (payload != null && payload.isNotEmpty) {
+      final mime = mimeType ?? _defaultMimeType();
+      return {
+        'type': 'image_url',
+        'image_url': {'url': 'data:' + mime + ';base64,' + payload},
+      };
+    }
+    return {
+      'type': 'text',
+      'text': '[Attachment: ' + (fileName ?? type.name) + ']',
+    };
+  }
+
+  String _defaultMimeType() {
+    switch (type) {
+      case ChatAttachmentType.image:
+        return 'image/jpeg';
+      case ChatAttachmentType.video:
+        return 'video/mp4';
+      case ChatAttachmentType.audio:
+        return 'audio/mpeg';
+      case ChatAttachmentType.document:
+        return 'application/octet-stream';
+      case ChatAttachmentType.text:
+        return 'text/plain';
+      case ChatAttachmentType.unknown:
+        return 'application/octet-stream';
+    }
+  }
+
   static ChatAttachmentType _typeFromString(String? value) {
     switch (value) {
       case 'image':
