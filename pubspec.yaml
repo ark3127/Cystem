@@ -1,0 +1,31 @@
+name: cystem
+description: A personal Android AI assistant powered by NVIDIA Nemotron 3 Super via NVIDIA NIM.
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_secure_storage: ^10.3.1
+  http: ^1.6.0
+  path_provider: ^2.1.5
+  flutter_markdown: ^0.7.7
+  markdown: ^7.3.0
+  image_picker: ^1.1.2
+  url_launcher: ^6.3.1
+  gallery_saver_plus: ^3.2.9
+  file_picker: ^8.0.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
