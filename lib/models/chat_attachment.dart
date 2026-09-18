@@ -10,8 +10,8 @@ enum ChatAttachmentType {
 class ChatAttachment {
   final String id;
   final ChatAttachmentType type;
-  final String mimeType;
-  final String data;
+  final String? mimeType;
+  final String? data;
   final String? fileName;
   final String? sourceUrl;
   final int? fileSize;
@@ -19,8 +19,8 @@ class ChatAttachment {
   const ChatAttachment({
     required this.id,
     required this.type,
-    required this.mimeType,
-    required this.data,
+    this.mimeType,
+    this.data,
     this.fileName,
     this.sourceUrl,
     this.fileSize,
@@ -36,46 +36,16 @@ class ChatAttachment {
 
   bool get isText => type == ChatAttachmentType.text;
 
-  bool get isUnknown => type == ChatAttachmentType.unknown;
-
-  bool get isBase64Data =>
-      !data.startsWith('http://') &&
-      !data.startsWith('https://') &&
-      !data.startsWith('data:');
-
-  String get displayName {
-    if (fileName != null && fileName!.trim().isNotEmpty) {
-      return fileName!;
-    }
-
-    switch (type) {
-      case ChatAttachmentType.image:
-        return 'Image';
-      case ChatAttachmentType.video:
-        return 'Video';
-      case ChatAttachmentType.audio:
-        return 'Audio';
-      case ChatAttachmentType.document:
-        return 'Document';
-      case ChatAttachmentType.text:
-        return 'Text file';
-      case ChatAttachmentType.unknown:
-        return 'Attachment';
-    }
-  }
-
-  String get extension {
-    if (fileName != null && fileName!.contains('.')) {
-      return fileName!.split('.').last.toLowerCase();
-    }
-
-    final mimeParts = mimeType.split('/');
-
-    if (mimeParts.length == 2) {
-      return mimeParts.last.toLowerCase();
-    }
-
-    return '';
+  factory ChatAttachment.fromJson(Map<String, dynamic> json) {
+    return ChatAttachment(
+      id: json['id'] as String? ?? '',
+      type: _typeFromString(json['type'] as String?),
+      mimeType: json['mimeType'] as String?,
+      data: json['data'] as String?,
+      fileName: json['fileName'] as String?,
+      sourceUrl: json['sourceUrl'] as String?,
+      fileSize: json['fileSize'] as int?,
+    );
   }
 
   Map<String, dynamic> toJson() {
@@ -84,74 +54,46 @@ class ChatAttachment {
       'type': type.name,
       'mimeType': mimeType,
       'data': data,
-      if (fileName != null) 'fileName': fileName,
-      if (sourceUrl != null) 'sourceUrl': sourceUrl,
-      if (fileSize != null) 'fileSize': fileSize,
-    };
-  }
-
-  factory ChatAttachment.fromJson(Map<String, dynamic> json) {
-    final rawType = json['type'] as String? ?? 'unknown';
-
-    final type = ChatAttachmentType.values.firstWhere(
-      (item) => item.name == rawType,
-      orElse: () => ChatAttachmentType.unknown,
-    );
-
-    return ChatAttachment(
-      id: json['id'] as String,
-      type: type,
-      mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
-      data: json['data'] as String? ?? '',
-      fileName: json['fileName'] as String?,
-      sourceUrl: json['sourceUrl'] as String?,
-      fileSize: (json['fileSize'] as num?)?.toInt(),
-    );
-  }
-
-  Map<String, dynamic> toApiContentPart() {
-    final normalizedData = data.startsWith('data:')
-        ? data
-        : 'data:$mimeType;base64,$data';
-
-    if (isImage) {
-      return {
-        'type': 'image_url',
-        'image_url': {
-          'url': normalizedData,
-        },
-      };
-    }
-
-    if (isText || mimeType.startsWith('text/')) {
-      return {
-        'type': 'text',
-        'text': data,
-      };
-    }
-
-    return {
-      'type': 'text',
-      'text': '''
-Attached file:
-Name: $displayName
-Type: $mimeType
-Size: ${fileSize ?? 'unknown'} bytes
-
-This file must be processed by the media/file perception pipeline.
-''',
-    };
-  }
-
-  Map<String, dynamic> toNanoOmniJson() {
-    return {
-      'id': id,
-      'type': type.name,
-      'mimeType': mimeType,
       'fileName': fileName,
+      'sourceUrl': sourceUrl,
       'fileSize': fileSize,
-      'data': data,
-      if (sourceUrl != null) 'sourceUrl': sourceUrl,
     };
+  }
+
+  static ChatAttachmentType _typeFromString(String? value) {
+    switch (value) {
+      case 'image':
+        return ChatAttachmentType.image;
+      case 'video':
+        return ChatAttachmentType.video;
+      case 'audio':
+        return ChatAttachmentType.audio;
+      case 'document':
+        return ChatAttachmentType.document;
+      case 'text':
+        return ChatAttachmentType.text;
+      default:
+        return ChatAttachmentType.unknown;
+    }
+  }
+
+  ChatAttachment copyWith({
+    String? id,
+    ChatAttachmentType? type,
+    String? mimeType,
+    String? data,
+    String? fileName,
+    String? sourceUrl,
+    int? fileSize,
+  }) {
+    return ChatAttachment(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      mimeType: mimeType ?? this.mimeType,
+      data: data ?? this.data,
+      fileName: fileName ?? this.fileName,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      fileSize: fileSize ?? this.fileSize,
+    );
   }
 }
