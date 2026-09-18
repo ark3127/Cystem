@@ -30,6 +30,9 @@ class ChatGenerationService {
     final token = cancellationToken ?? ChatCancellationToken();
     final wantsImage = _latestUserRequestsImage(messages);
     final wantsWebImages = _latestUserRequestsWebImage(messages);
+    // forceWebSearch (from an explicit "search the web" toggle in the UI)
+    // always wins over the regex guess, and skips it entirely so a user who
+    // deliberately asked for a search always gets a real attempt.
     final wantsWebSearch = !wantsImage && !wantsWebImages && (forceWebSearch || _latestUserRequestsWebSearch(messages));
     final prepared = <ChatMessage>[];
     for (final message in messages) {
@@ -51,11 +54,27 @@ class ChatGenerationService {
     if (wantsWebSearch) {
       final result = await _webSearchService.search(_latestUserText(messages));
       token.throwIfCancelled();
+      // A failed search (quota, auth, network, etc.) is an app-level fact,
+      // not conversational content. Never forward the raw service-error
+      // string to Nemotron: without a real tool call to anchor it, the
+      // model has no reliable way to know it's an error report rather than
+      // something to riff on, and it will improvise (wrong identity, wrong
+      // knowledge-cutoff claims, exposed internal error codes). Instead,
+      // report the failure directly and skip the model call entirely.
       if (_isServiceError(result)) {
         yield ChatStreamEvent(text: _userFacingSearchError(result));
         return;
       }
-      prepared.add(ChatMessage(id: '${DateTime.now().microsecondsSinceEpoch}_search', content: '[WEB SEARCH CONTEXT — PRIVATE]\n$result\n[END WEB SEARCH CONTEXT]', role: MessageRole.system, createdAt: DateTime.now()));
+      prepared.add(
+        ChatMessage(
+          id: '${DateTime.now().microsecondsSinceEpoch}_search',
+          content: '[WEB SEARCH CONTEXT — PRIVATE]\n$result\n[END WEB SEARCH CONTEXT]',
+          // `system`, not `user`: this is app-injected context, never
+          // something the human typed, and must not be mistaken for it.
+          role: MessageRole.system,
+          createdAt: DateTime.now(),
+        ),
+      );
     }
     var rounds = 0;
     while (true) {
@@ -102,7 +121,17 @@ class ChatGenerationService {
   }).toList();
 
   bool _isServiceError(String result) => result.startsWith('[SERVICE ERROR]');
-  String _userFacingSearchError(String serviceError) { final retryable = serviceError.contains('Retryable: true'); return retryable ? "I couldn't reach web search just now (it's temporarily unavailable) — please try again in a moment." : "Web search isn't available right now. Check the Gemini API key in Settings if this keeps happening."; }
+
+  /// Turns a `[SERVICE ERROR]` block into a short, on-brand message shown
+  /// directly to the user — without leaking status codes or the fact that
+  /// Gemini is the underlying search provider.
+  String _userFacingSearchError(String serviceError) {
+    final retryable = serviceError.contains('Retryable: true');
+    return retryable
+        ? "I couldn't reach web search just now (it's temporarily unavailable) — please try again in a moment."
+        : "Web search isn't available right now. Check the Gemini API key in Settings if this keeps happening.";
+  }
+
   String _latestUserText(List<ChatMessage> messages) { for (var i = messages.length - 1; i >= 0; i--) if (messages[i].isUser) return messages[i].content.trim(); return ''; }
   bool _latestUserRequestsImage(List<ChatMessage> messages) => _match(_latestUserText(messages), r'\b(generate|create|draw|make|render|design|produce|paint|illustrate)\b[\s\S]{0,100}\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b|\b(image|picture|photo|illustration|artwork|wallpaper|logo|poster|diagram)\b[\s\S]{0,50}\b(generate|create|draw|make|render|design|produce)\b');
   bool _latestUserRequestsWebImage(List<ChatMessage> messages) => _match(_latestUserText(messages), r'\b(find|show|get|search|look up|fetch)\b[\s\S]{0,100}\b(images?|pictures?|photos?|wallpaper|illustration)\b|\b(images?|pictures?|photos?)\b[\s\S]{0,70}\b(from|on|using)\b[\s\S]{0,40}\b(internet|web|online)\b');
