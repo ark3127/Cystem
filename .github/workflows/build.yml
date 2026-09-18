@@ -3,7 +3,11 @@ name: Build CYSTEM APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -19,71 +23,84 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
+
+      - name: Verify Flutter project
+        run: |
+          test -f pubspec.yaml
+          flutter --version
 
       - name: Generate Android project
-        run: flutter create --platforms=android .
+        run: |
+          flutter create --platforms=android .
 
-      - name: Configure Android SDK and networking
+      - name: Configure Android project
+        shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          android_app = Path('android/app/build.gradle.kts')
-          app_gradle = android_app.read_text()
-          app_gradle = re.sub(
-              r'compileSdk\s*=\s*[^\n]+',
-              'compileSdk = 36',
-              app_gradle,
-              count=1,
-          )
-          android_app.write_text(app_gradle)
+          gradle_kts = Path("android/app/build.gradle.kts")
+          gradle_groovy = Path("android/app/build.gradle")
 
-          manifest_path = Path('android/app/src/main/AndroidManifest.xml')
-          manifest = manifest_path.read_text()
-          permission = 'android.permission.INTERNET'
-          if f'android:name="{permission}"' not in manifest:
-              manifest = re.sub(
-                  r'(?m)^(\s*)<application',
-                  lambda match: f'    <uses-permission android:name="{permission}" />\n\n{match.group(1)}<application',
-                  manifest,
+          if gradle_kts.exists():
+              path = gradle_kts
+              text = path.read_text()
+              text = re.sub(
+                  r"compileSdk\s*=\s*[^\n]+",
+                  "compileSdk = 36",
+                  text,
+                  count=1,
+          )
+          elif gradle_groovy.exists():
+              path = gradle_groovy
+              text = path.read_text()
+              text = re.sub(
+                  r"compileSdk(?:Version)?\s+\S+",
+                  "compileSdk 36",
+                  text,
                   count=1,
               )
+          else:
+              raise SystemExit("Android app Gradle file was not found.")
+
+          path.write_text(text)
+
+          manifest_path = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          manifest = manifest_path.read_text()
+          permission = (
+              '<uses-permission '
+              'android:name="android.permission.INTERNET" />'
+          )
+
+          if permission not in manifest:
+              manifest = manifest.replace(
+                  "<application",
+                  f"{permission}\n\n    <application",
+                  1,
+              )
+
           manifest_path.write_text(manifest)
           PY
 
       - name: Get dependencies
         run: flutter pub get
-
-      - name: Align Flutter plugin Android SDKs
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          pub_cache = Path.home() / '.pub-cache' / 'hosted' / 'pub.dev'
-          patterns = (
-              re.compile(r'(compileSdkVersion\s+)\d+'),
-              re.compile(r'(compileSdk\s*=\s*)\d+'),
-          )
-          changed = []
-          for gradle_file in pub_cache.glob('*/android/build.gradle*'):
-              text = gradle_file.read_text()
-              updated = text
-              for pattern in patterns:
-                  updated = pattern.sub(r'\g<1>36', updated)
-              if updated != text:
-                  gradle_file.write_text(updated)
-                  changed.append(str(gradle_file))
-
-          print('Updated Android compileSdk to 36 in:')
-          for path in changed:
-              print(f'  - {path}')
-          PY
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
@@ -100,3 +117,4 @@ jobs:
           name: cystem-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+          retention-days: 14
